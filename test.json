@@ -1,0 +1,127 @@
+{
+  "depot": {
+    "id": "5774",
+    "address": "Dr. Martín C. Martínez 1222",
+    "coordinates": {
+      "latitude": -34.8704884,
+      "longitude": -56.1401427
+    },
+    "time_window": {
+      "start": "08:00:00",
+      "end": "23:00:00"
+    }
+  },
+  "vehicles": [
+    {
+      "id": "24457",
+      "capacity": 10,
+      "time_window": {
+        "start": "08:00:00",
+        "end": "23:00:00"
+      }
+    }
+  ],
+  "ride_requests": [
+    {
+      "id": "XAsk658",
+      "user_id": "001",
+      "has_companion": true,
+      "wheelchair_required": false,
+      "direction": "going",
+      "pickup": {
+        "coordinates": {
+          "latitude": -34.8960908,
+          "longitude": -56.1645813
+        },
+        "address": "Dr. Martín C. Martínez 1947"
+      },
+      "delivery": {
+        "coordinates": {
+          "latitude": -34.8957964,
+          "longitude": -56.1349328
+        },
+        "address": "Jacinto Vera 3740",
+        "time_window": {
+          "start": "13:00:00",
+          "end": "13:15:00"
+        }
+      }
+    },
+    {
+      "id": "dsUS23bd1",
+      "user_id": "002",
+      "has_companion": false,
+      "wheelchair_required": false,
+      "direction": "going",
+      "pickup": {
+        "coordinates": {
+          "latitude": -34.8985529,
+          "longitude": -56.1590405
+        },
+        "address": "Dr. Martín C. Martínez 1947"
+      },
+      "delivery": {
+        "coordinates": {
+          "latitude": -34.8946715,
+          "longitude": -56.18369
+        },
+        "address": "Jacinto Vera 3740",
+        "time_window": {
+          "start": "09:00:00",
+          "end": "10:00:00"
+        }
+      }
+    },
+    {
+      "id": "dsUS23bd2",
+      "user_id": "002",
+      "has_companion": false,
+      "wheelchair_required": false,
+      "direction": "return",
+      "pickup": {
+        "coordinates": {
+          "latitude": -34.8946715,
+          "longitude": -56.18369
+        },
+        "address": "Dr. Martín C. Martínez 1947",
+        "time_window": {
+          "start": "14:00:00",
+          "end": "15:00:00"
+        }
+      },
+      "delivery": {
+        "coordinates": {
+          
+          "latitude": -34.8985529,
+          "longitude": -56.1590405
+        },
+        "address": "Jacinto Vera 3740"
+      }
+    },
+    {
+      "id": "XAsk6538",
+      "user_id": "001",
+      "has_companion": true,
+      "wheelchair_required": false,
+      "direction": "return",
+      "pickup": {
+        "coordinates": {
+          "latitude": -34.8957964,
+          "longitude": -56.1349328
+        },
+        "time_window": {
+          "start": "14:00:00",
+          "end": "14:20:00"
+        },
+        "address": "Dr. Martín C. Martínez 1947"
+      },
+      "delivery": {
+        "coordinates": {
+          "latitude": -34.8960908,
+          "longitude": -56.1645813
+        },
+        "address": "Jacinto Vera 3740"
+      }
+    }
+  ]
+}

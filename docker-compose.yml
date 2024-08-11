@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  osrm:
+    build:
+      context: ./osrm
+    volumes:
+      - ./osrm:/osrm
+    ports:
+      - "4200:5000"
+
+  engine:
+    build: ./engine
+    ports:
+      - "4210:8080"
+    depends_on:
+      - osrm
+    environment:
+      - OSRM_BASE_URL=http://osrm:5000

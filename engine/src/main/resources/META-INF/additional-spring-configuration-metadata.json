@@ -1,0 +1,28 @@
+{
+  "properties": [
+    {
+      "name": "osrm.base-url",
+      "type": "java.lang.String",
+      "description": "OSRM base url."
+    },
+    {
+      "name": "osrm.matrix-endpoint",
+      "type": "java.lang.String",
+      "description": "OSRM table operation endpoint."
+    },
+    {
+      "name": "osrm.matrix-params",
+      "type": "java.lang.String",
+      "description": "OSRM table operation parameters. See OSRM docs for more details."
+    },
+    {
+      "name": "osrm.route-endpoint",
+      "type": "java.lang.String",
+      "description": "OSRM route operation endpoint."
+    },
+    {
+      "name": "osrm.route-params",
+      "type": "java.lang.String",
+      "description": "OSRM route operation parameters. See OSRM docs for more details."
+    }
+  ] }

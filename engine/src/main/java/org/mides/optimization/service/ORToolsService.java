@@ -16,7 +16,7 @@ import java.time.Duration;
 public class ORToolsService implements IORToolsService {
 
     /* Max approx. distance between nodes * SpanCostCoefficient */
-    private static final long DROP_PENALTY = 1000000 * 1000;
+    private static final long DROP_PENALTY = 10000000 * 100;
 
     @Override
     public Solution solve(Problem problem, long[][] distanceMatrix, long[][] timeMatrix) {

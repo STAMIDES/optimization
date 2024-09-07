@@ -59,7 +59,7 @@ public class OptimizationController {
                 try {
                     return orToolsService.solve(problem, distanceMatrix, timeMatrix);
                 } catch (Exception e) {
-                    throw new RuntimeException("REPLACE WITH OR TOOLS CUSTOM EXCEPTION", e);
+                    throw new RuntimeException("Constraint solver failed", e);
                 }
             }, executorService).thenApply(solution -> {
                 var routeFutures = solution.getRoutes().stream()
@@ -68,7 +68,7 @@ public class OptimizationController {
                             route.setGeometry(generateRouteGeometry(route));
                             return route;
                         } catch (Exception e) {
-                            throw new RuntimeException("REPLACE WITH QUERY ROUTE CUSTOM EXCEPTION", e);
+                            throw new RuntimeException("Failed to query route geometry", e);
                         }
                     }, executorService))
                     .toList();

@@ -58,6 +58,16 @@ public class Problem {
             tasksByIndex.put(index + 1, ride.getDelivery());
 
             index += 2;
+
+            if (ride.getPickup().getTimeWindow().startSeconds() > ride.getPickup().getTimeWindow().endSeconds())
+                throw new RuntimeException(
+                    String.format("Error with time window from Ride ID %s, Pickup Item", ride.getId())
+                );
+
+            if (ride.getDelivery().getTimeWindow().startSeconds() > ride.getDelivery().getTimeWindow().endSeconds())
+                throw new RuntimeException(
+                    String.format("Error with time window from Ride ID %s, Delivery Item", ride.getId())
+                );
         }
 
         numberOfNodes = rideRequests.size() * 2 + 1;

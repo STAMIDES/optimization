@@ -1,11 +1,6 @@
 package org.mides.optimization.service;
 
-import com.google.ortools.constraintsolver.RoutingIndexManager;
-import com.google.ortools.constraintsolver.RoutingModel;
-import com.google.ortools.constraintsolver.Assignment;
-import com.google.ortools.constraintsolver.FirstSolutionStrategy;
-import com.google.ortools.constraintsolver.LocalSearchMetaheuristic;
-import com.google.ortools.constraintsolver.main;
+import com.google.ortools.constraintsolver.*;
 import org.mides.optimization.model.*;
 import org.mides.optimization.util.Utils;
 import org.springframework.stereotype.Service;
@@ -17,6 +12,7 @@ public class ORToolsService implements IORToolsService {
 
     /* Max approx. distance between nodes * SpanCostCoefficient */
     private static final long DROP_PENALTY = 10000000 * 100;
+    private static final long MAX_RIDE_TIME = 3600;
 
     @Override
     public Solution solve(Problem problem, long[][] distanceMatrix, long[][] timeMatrix) {
@@ -38,7 +34,6 @@ public class ORToolsService implements IORToolsService {
             var toNode = manager.indexToNode(toIndex);
             return distanceMatrix[fromNode][toNode];
         });
-        routing.setArcCostEvaluatorOfAllVehicles(distanceCallbackIndex);
         routing.addDimension(
             distanceCallbackIndex,
             0,
@@ -46,6 +41,7 @@ public class ORToolsService implements IORToolsService {
             true,
             "distance"
         );
+        routing.setArcCostEvaluatorOfAllVehicles(distanceCallbackIndex);
         var distanceDimension = routing.getMutableDimension("distance");
         distanceDimension.setGlobalSpanCostCoefficient(100);
 
@@ -87,7 +83,7 @@ public class ORToolsService implements IORToolsService {
 
         for (var vehicle = 0; vehicle < problem.getVehicles().size(); vehicle++)
         {
-            routing.addVariableMinimizedByFinalizer(
+            routing.addVariableMaximizedByFinalizer(
                 timeDimension.cumulVar(routing.start(vehicle))
             );
             routing.addVariableMinimizedByFinalizer(
@@ -110,6 +106,16 @@ public class ORToolsService implements IORToolsService {
             solver.addConstraint(solver.makeLessOrEqual(
                 distanceDimension.cumulVar(pickupIndex),
                 distanceDimension.cumulVar(deliveryIndex)
+            ));
+        }
+
+        /* Add maximum ride time for a single pickup-delivery constraint */
+        for (var ride : problem.getRideRequests()) {
+            var pickupIndex = manager.nodeToIndex(ride.getPickup().getIndex());
+            var deliveryIndex = manager.nodeToIndex(ride.getDelivery().getIndex());
+            solver.addConstraint(solver.makeLessOrEqual(
+                timeDimension.cumulVar(deliveryIndex),
+                solver.makeSum(timeDimension.cumulVar(pickupIndex), MAX_RIDE_TIME)
             ));
         }
 
@@ -165,15 +171,13 @@ public class ORToolsService implements IORToolsService {
             route.setVehicleId(problem.getVehicles().get(vehicle).getId());
 
             int nodeIndex;
-            int previousNodeIndex = -1;
             int position = 0;
             long index = routing.start(vehicle);
 
             while (!routing.isEnd(index)) {
                 nodeIndex = manager.indexToNode(index);
-                Duration travelTime = previousNodeIndex == -1
-                    ? Duration.ZERO
-                    : Duration.ofSeconds(timeMatrix[previousNodeIndex][nodeIndex]);
+
+                int nextNodeIndex = manager.indexToNode(assignment.value(routing.nextVar(index)));
 
                 var ride = problem.getTasksByIndex().get(nodeIndex).getRide();
                 Visit visit = new Visit();
@@ -184,7 +188,7 @@ public class ORToolsService implements IORToolsService {
                 visit.setAddress(problem.getTasksByIndex().get(nodeIndex).getAddress());
                 visit.setCoordinates(problem.getTasksByIndex().get(nodeIndex).getCoordinates());
                 visit.setArrivalTime(Duration.ofSeconds(assignment.min(timeDimension.cumulVar(index))));
-                visit.setWaitingTime(travelTime);
+                visit.setTravelTimeToNextVisit(Duration.ofSeconds(timeMatrix[nodeIndex][nextNodeIndex]));
                 visit.setSolutionWindow(new TimeWindow(
                     Duration.ofSeconds(assignment.min(timeDimension.cumulVar(index))),
                     Duration.ofSeconds(assignment.max(timeDimension.cumulVar(index)))
@@ -192,8 +196,6 @@ public class ORToolsService implements IORToolsService {
 
                 route.getVisits().add(visit);
                 index = assignment.value(routing.nextVar(index));
-
-                previousNodeIndex = nodeIndex;
             }
 
             nodeIndex = manager.indexToNode(index);
@@ -208,7 +210,7 @@ public class ORToolsService implements IORToolsService {
             lastVisit.setAddress(problem.getTasksByIndex().get(nodeIndex).getAddress());
             lastVisit.setCoordinates(problem.getTasksByIndex().get(nodeIndex).getCoordinates());
             lastVisit.setArrivalTime(Duration.ofSeconds(assignment.min(timeDimension.cumulVar(index))));
-            lastVisit.setWaitingTime(Duration.ofSeconds(timeMatrix[previousNodeIndex][nodeIndex]));
+            lastVisit.setTravelTimeToNextVisit(Duration.ZERO);
             lastVisit.setSolutionWindow(new TimeWindow(
                 Duration.ofSeconds(assignment.min(timeDimension.cumulVar(index))),
                 Duration.ofSeconds(assignment.max(timeDimension.cumulVar(index)))

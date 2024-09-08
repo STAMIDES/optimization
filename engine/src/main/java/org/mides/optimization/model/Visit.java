@@ -39,9 +39,9 @@ public class Visit {
     @JsonSerialize(using = DurationSerializer.class)
     private Duration arrivalTime;
 
-    @JsonProperty("waiting_time")
+    @JsonProperty("travel_time_to_next_visit")
     @JsonSerialize(using = DurationSerializer.class)
-    private Duration waitingTime;
+    private Duration travelTimeToNextVisit;
 
     @JsonProperty("solution_window")
     private TimeWindow solutionWindow = new TimeWindow();

@@ -20,16 +20,20 @@ public class PickupDeliveryTask {
     @JsonProperty("time_window")
     private TimeWindow timeWindow = new TimeWindow();
 
+    @JsonProperty("stop_id")
+    private String stopId;
+
     @JsonIgnore
     private int index;
 
     @JsonIgnore
     private RideRequest ride;
 
-    public PickupDeliveryTask(int index, String address, TimeWindow timeWindow, Coordinate coordinates) {
+    public PickupDeliveryTask(int index, String address, TimeWindow timeWindow, Coordinate coordinates, String stopId) {
         this.index = index;
         this.address = address;
         this.timeWindow = timeWindow;
         this.coordinates = coordinates;
+        this.stopId = stopId;
     }
 }

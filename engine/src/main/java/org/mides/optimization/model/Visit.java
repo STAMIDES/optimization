@@ -48,4 +48,7 @@ public class Visit {
 
     @JsonProperty("type")
     private String type;
+
+    @JsonProperty("stop_id")
+    private String stopId;
 }

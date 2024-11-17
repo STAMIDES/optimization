@@ -193,6 +193,7 @@ public class ORToolsService implements IORToolsService {
                     Duration.ofSeconds(assignment.min(timeDimension.cumulVar(index))),
                     Duration.ofSeconds(assignment.max(timeDimension.cumulVar(index)))
                 ));
+                visit.setType(ride != null ? ride.getType() : null);
 
                 route.getVisits().add(visit);
                 index = assignment.value(routing.nextVar(index));
@@ -215,6 +216,7 @@ public class ORToolsService implements IORToolsService {
                 Duration.ofSeconds(assignment.min(timeDimension.cumulVar(index))),
                 Duration.ofSeconds(assignment.max(timeDimension.cumulVar(index)))
             ));
+            lastVisit.setType(ride != null ? ride.getType() : null);
 
             route.getVisits().add(lastVisit);
 

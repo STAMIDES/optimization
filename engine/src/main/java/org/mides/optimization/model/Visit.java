@@ -45,4 +45,7 @@ public class Visit {
 
     @JsonProperty("solution_window")
     private TimeWindow solutionWindow = new TimeWindow();
+
+    @JsonProperty("type")
+    private String type;
 }

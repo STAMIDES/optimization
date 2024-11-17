@@ -225,7 +225,7 @@ public class ORToolsService implements IORToolsService {
             route.setDuration(endTime.minus(startTime));
             route.setDistance(Utils.convertDistanceBack(assignment.value(distanceDimension.cumulVar(index))));
 
-            solution.getRoutes().add(route);
+            if (route.getVisits().size() > 2) solution.getRoutes().add(route);
         }
 
         return solution;

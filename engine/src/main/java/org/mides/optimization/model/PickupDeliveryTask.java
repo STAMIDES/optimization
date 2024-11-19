@@ -29,6 +29,9 @@ public class PickupDeliveryTask {
     @JsonIgnore
     private RideRequest ride;
 
+    @JsonProperty("type")
+    private String type;
+    
     public PickupDeliveryTask(int index, String address, TimeWindow timeWindow, Coordinate coordinates, String stopId) {
         this.index = index;
         this.address = address;

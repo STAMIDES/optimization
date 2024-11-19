@@ -176,49 +176,49 @@ public class ORToolsService implements IORToolsService {
 
             while (!routing.isEnd(index)) {
                 nodeIndex = manager.indexToNode(index);
-
+                var taskNodeIndex = problem.getTasksByIndex().get(nodeIndex);
                 int nextNodeIndex = manager.indexToNode(assignment.value(routing.nextVar(index)));
 
-                var ride = problem.getTasksByIndex().get(nodeIndex).getRide();
+                var ride = taskNodeIndex.getRide();
                 Visit visit = new Visit();
                 visit.setPosition(position++);
                 visit.setRideId(ride != null ? ride.getId() : null);
                 visit.setUserId(ride != null ? ride.getUserId() : null);
                 visit.setRideDirection(ride != null ? ride.getDirection() : null);
-                visit.setAddress(problem.getTasksByIndex().get(nodeIndex).getAddress());
-                visit.setCoordinates(problem.getTasksByIndex().get(nodeIndex).getCoordinates());
+                visit.setAddress(taskNodeIndex.getAddress());
+                visit.setCoordinates(taskNodeIndex.getCoordinates());
                 visit.setArrivalTime(Duration.ofSeconds(assignment.min(timeDimension.cumulVar(index))));
                 visit.setTravelTimeToNextVisit(Duration.ofSeconds(timeMatrix[nodeIndex][nextNodeIndex]));
                 visit.setSolutionWindow(new TimeWindow(
                     Duration.ofSeconds(assignment.min(timeDimension.cumulVar(index))),
                     Duration.ofSeconds(assignment.max(timeDimension.cumulVar(index)))
                 ));
-                visit.setType(ride != null ? ride.getType() : null);
-                visit.setStopId(problem.getTasksByIndex().get(nodeIndex).getStopId());
+                visit.setType(taskNodeIndex.getType());
+                visit.setStopId(taskNodeIndex.getStopId());
 
                 route.getVisits().add(visit);
                 index = assignment.value(routing.nextVar(index));
             }
 
             nodeIndex = manager.indexToNode(index);
-
-            var ride = problem.getTasksByIndex().get(nodeIndex).getRide();
+            var taskNodeIndex = problem.getTasksByIndex().get(nodeIndex);
+            var ride = taskNodeIndex.getRide();
 
             Visit lastVisit = new Visit();
             lastVisit.setPosition(position);
             lastVisit.setRideId(ride != null ? ride.getId() : null);
             lastVisit.setUserId(ride != null ? ride.getUserId() : null);
             lastVisit.setRideDirection(ride != null ? ride.getDirection() : null);
-            lastVisit.setAddress(problem.getTasksByIndex().get(nodeIndex).getAddress());
-            lastVisit.setCoordinates(problem.getTasksByIndex().get(nodeIndex).getCoordinates());
+            lastVisit.setAddress(taskNodeIndex.getAddress());
+            lastVisit.setCoordinates(taskNodeIndex.getCoordinates());
             lastVisit.setArrivalTime(Duration.ofSeconds(assignment.min(timeDimension.cumulVar(index))));
             lastVisit.setTravelTimeToNextVisit(Duration.ZERO);
             lastVisit.setSolutionWindow(new TimeWindow(
                 Duration.ofSeconds(assignment.min(timeDimension.cumulVar(index))),
                 Duration.ofSeconds(assignment.max(timeDimension.cumulVar(index)))
             ));
-            lastVisit.setType(ride != null ? ride.getType() : null);
-            lastVisit.setStopId(problem.getTasksByIndex().get(nodeIndex).getStopId());
+            lastVisit.setType(taskNodeIndex.getType());
+            lastVisit.setStopId(taskNodeIndex.getStopId());
 
             route.getVisits().add(lastVisit);
 

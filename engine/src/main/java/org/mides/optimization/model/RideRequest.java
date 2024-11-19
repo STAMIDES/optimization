@@ -40,9 +40,6 @@ public class RideRequest {
     @JsonDeserialize(using = RideDirectionDeserializer.class)
     private RideDirection direction;
 
-    @JsonProperty("type")
-    private String type;
-
     @Override
     public String toString() {
         return id;

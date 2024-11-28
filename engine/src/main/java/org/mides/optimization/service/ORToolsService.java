@@ -168,8 +168,9 @@ public class ORToolsService implements IORToolsService {
 
         for (int vehicle = 0; vehicle < problem.getVehicles().size(); vehicle++) {
             var route = new Route();
-            route.setVehicleId(problem.getVehicles().get(vehicle).getId());
-
+            var problemVehicle = problem.getVehicles().get(vehicle);
+            route.setVehicleId(problemVehicle.getId());
+            route.setTimeWindow(problemVehicle.getTimeWindow());
             int nodeIndex;
             int position = 0;
             long index = routing.start(vehicle);
@@ -226,7 +227,6 @@ public class ORToolsService implements IORToolsService {
             var startTime = route.getVisits().get(0).getArrivalTime();
             route.setDuration(endTime.minus(startTime));
             route.setDistance(Utils.convertDistanceBack(assignment.value(distanceDimension.cumulVar(index))));
-
             if (route.getVisits().size() > 2) solution.getRoutes().add(route);
         }
 

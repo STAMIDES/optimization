@@ -29,4 +29,8 @@ public class Route {
 
     @JsonProperty("geometry")
     private List<List<Double>> geometry = new ArrayList<>();
+
+    @JsonProperty("time_window")
+    private TimeWindow timeWindow = new TimeWindow();
+
 }

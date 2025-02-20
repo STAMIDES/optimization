@@ -6,6 +6,9 @@ import org.mides.optimization.util.Utils;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
 
 @Service
 public class ORToolsService implements IORToolsService {
@@ -16,83 +19,174 @@ public class ORToolsService implements IORToolsService {
 
     @Override
     public Solution solve(Problem problem, long[][] distanceMatrix, long[][] timeMatrix) {
-        var manager = new RoutingIndexManager(
-            problem.getNumberOfNodes(),
-            problem.getVehicles().size(),
-            0
-        );
-        var routing = new RoutingModel(manager);
 
-        /* Allow dropping nodes */
-        for (int i = 1; i < problem.getNumberOfNodes(); i++) {
-            routing.addDisjunction(new long[] { manager.nodeToIndex(i) }, DROP_PENALTY);
+        Objects.requireNonNull(problem, "Problem cannot be null");
+        Objects.requireNonNull(distanceMatrix, "Distance matrix cannot be null");
+        Objects.requireNonNull(timeMatrix, "Time matrix cannot be null");
+
+
+        int numVehicles = problem.getVehicles().size();
+        List<Integer> startIndices = new ArrayList<>();
+        List<Integer> endIndices = new ArrayList<>();
+        System.out.println("Num Vehicles: " + numVehicles);
+        for (int i = 0; i < numVehicles; i++) {
+            Vehicle vehicle = problem.getVehicles().get(i);
+            Objects.requireNonNull(vehicle, "Vehicle cannot be null");
+            Objects.requireNonNull(vehicle.getDepotStart(), "Vehicle depotStart cannot be null");
+            Objects.requireNonNull(vehicle.getDepotEnd(), "Vehicle depotEnd cannot be null");
+
+            startIndices.add(vehicle.getDepotStart().getIndex());
+            endIndices.add(vehicle.getDepotEnd().getIndex());
         }
+        System.out.println("Start Indices: " + startIndices);
 
+
+        var manager = new RoutingIndexManager(
+                problem.getNumberOfNodes(),
+                numVehicles,
+                startIndices.stream().mapToInt(Integer::intValue).toArray(),
+                endIndices.stream().mapToInt(Integer::intValue).toArray()
+        );
+        System.out.println("Manager: " + manager);
+        var routing = new RoutingModel(manager);
+        System.out.println("Routing: " + routing);
+        /* Allow dropping nodes */
+        for (int i = 0; i < problem.getNumberOfNodes(); i++) {
+            //Skip Start and End Depots
+            final int currentNodeIndex = i;
+            PickupDeliveryTask task = problem.getTasksByIndex().get(currentNodeIndex);
+            if (task != null &&
+                    task.getStopId() != null &&
+                    problem.getVehicles().stream().anyMatch(v ->
+                            v.getDepotStart().getId().equals(task.getStopId()) ||
+                                    v.getDepotEnd().getId().equals(task.getStopId())))
+            {
+                continue;
+            }
+            routing.addDisjunction(new long[] { manager.nodeToIndex(currentNodeIndex) }, DROP_PENALTY);
+        }
+        System.out.println("Routing after drop: " + routing);
         /* Add distance dimension */
         var distanceCallbackIndex = routing.registerTransitCallback((fromIndex, toIndex) -> {
             var fromNode = manager.indexToNode(fromIndex);
             var toNode = manager.indexToNode(toIndex);
+             if (fromNode < 0 || fromNode >= distanceMatrix.length || toNode < 0 || toNode >= distanceMatrix[fromNode].length) {
+                System.err.println("ERROR: Index out of bounds in distance callback. fromNode: " + fromNode + ", toNode: " + toNode);
+                return 0; // Or some other appropriate error handling
+            }
             return distanceMatrix[fromNode][toNode];
         });
+        System.out.println("Distance Callback Index: " + distanceCallbackIndex);
         routing.addDimension(
-            distanceCallbackIndex,
-            0,
-            Long.MAX_VALUE,
-            true,
-            "distance"
+                distanceCallbackIndex,
+                0,
+                Long.MAX_VALUE,
+                true,
+                "distance"
         );
         routing.setArcCostEvaluatorOfAllVehicles(distanceCallbackIndex);
         var distanceDimension = routing.getMutableDimension("distance");
         distanceDimension.setGlobalSpanCostCoefficient(100);
-
+        System.out.println("Distance Dimension: " + distanceDimension);
         /* Add time dimension */
         var timeCallbackIndex = routing.registerTransitCallback((fromIndex, toIndex) ->
         {
             var fromNode = manager.indexToNode(fromIndex);
             var toNode = manager.indexToNode(toIndex);
+            if (fromNode < 0 || fromNode >= timeMatrix.length || toNode < 0 || toNode >= timeMatrix[fromNode].length) {
+                System.err.println("ERROR: Index out of bounds in time callback. fromNode: " + fromNode + ", toNode: " + toNode + ", Size: " +timeMatrix.length);
+                return 0;
+            }
             return timeMatrix[fromNode][toNode];
         });
+        System.out.println("Time Callback Index: " + timeCallbackIndex);
         routing.addDimension(
-            timeCallbackIndex,
-            Long.MAX_VALUE, /* Allow waiting time */
-            Long.MAX_VALUE, /* Max duration per vehicle */
-            false, /* Don't force to start cumulative var at zero*/
-            "time"
+                timeCallbackIndex,
+                Long.MAX_VALUE, /* Allow waiting time */
+                Long.MAX_VALUE, /* Max duration per vehicle */
+                false, /* Don't force to start cumulative var at zero*/
+                "time"
         );
         var timeDimension = routing.getMutableDimension("time");
-        for (var i = 1; i < problem.getNumberOfNodes(); i++)
-        {
-            var index = manager.nodeToIndex(i);
-            timeDimension.cumulVar(index).setRange(
-                problem.getTasksByIndex().get(i).getTimeWindow().startSeconds(),
-                problem.getTasksByIndex().get(i).getTimeWindow().endSeconds()
-            );
-            if (problem.getTasksByIndex().get(i).getRide().getPickup().getIndex() == i)
-                timeDimension.slackVar(index).setValue(0); /* No waiting time after pickup */
-            routing.addToAssignment(timeDimension.slackVar(index));
+        System.out.println("Time Dimension: " + timeDimension);
+        // Set time windows for all nodes, including start and end depots
+        for (int i = 0; i < problem.getNumberOfNodes(); i++) {
+            PickupDeliveryTask task = problem.getTasksByIndex().get(i);
+            if (task != null) {
+                var index = manager.nodeToIndex(i);
+                 if (task.getTimeWindow().startSeconds() > task.getTimeWindow().endSeconds()) {
+                     System.err.println("ERROR: Invalid time window for task index " + i +
+                        ". Start: " + task.getTimeWindow().startSeconds() +
+                        ", End: " + task.getTimeWindow().endSeconds());
+
+                     //Option A: skip
+                     //continue;
+                     //Option B: Correct
+                     //long temp = task.getTimeWindow().startSeconds();
+                     //task.getTimeWindow().setStart(Duration.ofSeconds(task.getTimeWindow().endSeconds()));
+                     //task.getTimeWindow().setEnd(Duration.ofSeconds(temp));
+                }
+
+                try {
+                    timeDimension.cumulVar(index).setRange(
+                        task.getTimeWindow().startSeconds(),
+                        task.getTimeWindow().endSeconds()
+                    );
+                 } catch (Exception e) {
+                        System.err.println("ERROR setting time window for index: " + index +
+                            ", Node Index: " + i +
+                            ", Start: " + task.getTimeWindow().startSeconds() +
+                            ", End: " + task.getTimeWindow().endSeconds() +
+                            ", Exception: " + e.getMessage());
+                            // You might choose to re-throw the exception, or handle it differently
+                        throw e; // Re-throwing is often a good choice in this situation.
+                }
+
+                if (task.getRide() != null && task.getRide().getPickup().getIndex() == i) {
+                    timeDimension.slackVar(index).setValue(0);
+                }
+
+                routing.addToAssignment(timeDimension.slackVar(index));
+            }
+            else{
+                 System.err.println("WARNING: Task at index " + i + " is null.");
+            }
         }
 
-        for (var vehicle = 0; vehicle < problem.getVehicles().size(); vehicle++)
+        System.out.println("Routing after time: " + routing);
+        for (int vehicle = 0; vehicle < numVehicles; vehicle++)
         {
-            var index = routing.start(vehicle);
-            timeDimension.cumulVar(index).setRange(
-                problem.getDepot().getTimeWindow().startSeconds(),
-                problem.getDepot().getTimeWindow().endSeconds()
-            );
-        }
+            int startIndex = (int) manager.nodeToIndex(startIndices.get(vehicle));
+            int endIndex = (int) manager.nodeToIndex(endIndices.get(vehicle));
 
-        for (var vehicle = 0; vehicle < problem.getVehicles().size(); vehicle++)
-        {
+             if (problem.getVehicles().get(vehicle).getDepotStart().getTimeWindow().startSeconds() >  problem.getVehicles().get(vehicle).getDepotStart().getTimeWindow().endSeconds()) {
+                    System.err.println("ERROR: Invalid time window for Depot Start " + vehicle );
+             }
+             if (problem.getVehicles().get(vehicle).getDepotEnd().getTimeWindow().startSeconds() >  problem.getVehicles().get(vehicle).getDepotEnd().getTimeWindow().endSeconds()) {
+                    System.err.println("ERROR: Invalid time window for Depot End " + vehicle );
+             }
+            try{
+                timeDimension.cumulVar(startIndex).setRange(
+                    problem.getVehicles().get(vehicle).getDepotStart().getTimeWindow().startSeconds(),
+                    problem.getVehicles().get(vehicle).getDepotStart().getTimeWindow().endSeconds()
+                );
+            } catch (Exception e) {
+                System.err.println("ERROR setting time window for index: " + vehicle +
+                    ", Node Index: " + startIndex +
+                    ", Start: " + problem.getVehicles().get(vehicle).getDepotStart().getTimeWindow().startSeconds() +
+                    ", End: " + problem.getVehicles().get(vehicle).getDepotStart().getTimeWindow().endSeconds() +
+                    ", Exception: " + e.getMessage());
+                throw e; // Re-throwing is often a good choice in this situation.
+            }
+
             routing.addVariableMaximizedByFinalizer(
-                timeDimension.cumulVar(routing.start(vehicle))
+                    timeDimension.cumulVar(startIndex)
             );
             routing.addVariableMinimizedByFinalizer(
-                timeDimension.cumulVar(routing.end(vehicle))
+                    timeDimension.cumulVar(endIndex)
             );
         }
-
-        /* TO DO: Add capacity constraints */
-
+        System.out.println("Routing after depot: " + routing);
         /* Add pickup-delivery constraints */
         var solver = routing.solver();
         for (var ride : problem.getRideRequests()) {
@@ -100,31 +194,31 @@ public class ORToolsService implements IORToolsService {
             var deliveryIndex = manager.nodeToIndex(ride.getDelivery().getIndex());
             routing.addPickupAndDelivery(pickupIndex, deliveryIndex);
             solver.addConstraint(solver.makeEquality(
-                routing.vehicleVar(pickupIndex),
-                routing.vehicleVar(deliveryIndex)
+                    routing.vehicleVar(pickupIndex),
+                    routing.vehicleVar(deliveryIndex)
             ));
             solver.addConstraint(solver.makeLessOrEqual(
-                distanceDimension.cumulVar(pickupIndex),
-                distanceDimension.cumulVar(deliveryIndex)
+                    distanceDimension.cumulVar(pickupIndex),
+                    distanceDimension.cumulVar(deliveryIndex)
             ));
         }
-
+        System.out.println("Routing after pickup-delivery: " + routing);
         /* Add maximum ride time for a single pickup-delivery constraint */
         for (var ride : problem.getRideRequests()) {
             var pickupIndex = manager.nodeToIndex(ride.getPickup().getIndex());
             var deliveryIndex = manager.nodeToIndex(ride.getDelivery().getIndex());
             solver.addConstraint(solver.makeLessOrEqual(
-                timeDimension.cumulVar(deliveryIndex),
-                solver.makeSum(timeDimension.cumulVar(pickupIndex), MAX_RIDE_TIME)
+                    timeDimension.cumulVar(deliveryIndex),
+                    solver.makeSum(timeDimension.cumulVar(pickupIndex), MAX_RIDE_TIME)
             ));
         }
-
+        System.out.println("Routing after max ride time: " + routing);
         var searchParams = main.defaultRoutingSearchParameters()
-            .toBuilder()
-            .setFirstSolutionStrategy(FirstSolutionStrategy.Value.PATH_CHEAPEST_ARC)
-            .setLocalSearchMetaheuristic(LocalSearchMetaheuristic.Value.GUIDED_LOCAL_SEARCH)
-            .setTimeLimit(com.google.protobuf.Duration.newBuilder().setNanos(500000000).build())
-            .build();
+                .toBuilder()
+                .setFirstSolutionStrategy(FirstSolutionStrategy.Value.PATH_CHEAPEST_ARC)
+                .setLocalSearchMetaheuristic(LocalSearchMetaheuristic.Value.GUIDED_LOCAL_SEARCH)
+                .setTimeLimit(com.google.protobuf.Duration.newBuilder().setNanos(500000000).build())
+                .build();
 
         var assignment = routing.solveWithParameters(searchParams);
 
@@ -132,11 +226,11 @@ public class ORToolsService implements IORToolsService {
     }
 
     private static Solution buildSolution(
-        Problem problem,
-        RoutingModel routing,
-        RoutingIndexManager manager,
-        Assignment assignment,
-        long[][] timeMatrix
+            Problem problem,
+            RoutingModel routing,
+            RoutingIndexManager manager,
+            Assignment assignment,
+            long[][] timeMatrix
     ) {
         if (assignment == null) {
             throw new IllegalArgumentException("Unfeasible problem");
@@ -175,6 +269,7 @@ public class ORToolsService implements IORToolsService {
             int position = 0;
             long index = routing.start(vehicle);
 
+
             while (!routing.isEnd(index)) {
                 nodeIndex = manager.indexToNode(index);
                 var taskNodeIndex = problem.getTasksByIndex().get(nodeIndex);
@@ -191,8 +286,8 @@ public class ORToolsService implements IORToolsService {
                 visit.setArrivalTime(Duration.ofSeconds(assignment.min(timeDimension.cumulVar(index))));
                 visit.setTravelTimeToNextVisit(Duration.ofSeconds(timeMatrix[nodeIndex][nextNodeIndex]));
                 visit.setSolutionWindow(new TimeWindow(
-                    Duration.ofSeconds(assignment.min(timeDimension.cumulVar(index))),
-                    Duration.ofSeconds(assignment.max(timeDimension.cumulVar(index)))
+                        Duration.ofSeconds(assignment.min(timeDimension.cumulVar(index))),
+                        Duration.ofSeconds(assignment.max(timeDimension.cumulVar(index)))
                 ));
                 visit.setType(taskNodeIndex.getType());
                 visit.setStopId(taskNodeIndex.getStopId());
@@ -215,8 +310,8 @@ public class ORToolsService implements IORToolsService {
             lastVisit.setArrivalTime(Duration.ofSeconds(assignment.min(timeDimension.cumulVar(index))));
             lastVisit.setTravelTimeToNextVisit(Duration.ZERO);
             lastVisit.setSolutionWindow(new TimeWindow(
-                Duration.ofSeconds(assignment.min(timeDimension.cumulVar(index))),
-                Duration.ofSeconds(assignment.max(timeDimension.cumulVar(index)))
+                    Duration.ofSeconds(assignment.min(timeDimension.cumulVar(index))),
+                    Duration.ofSeconds(assignment.max(timeDimension.cumulVar(index)))
             ));
             lastVisit.setType(taskNodeIndex.getType());
             lastVisit.setStopId(taskNodeIndex.getStopId());

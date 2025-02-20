@@ -17,9 +17,10 @@ import java.util.Map;
 @NoArgsConstructor
 public class Problem {
 
-    @NotNull
-    @JsonProperty("depot")
-    private Depot depot;
+    // No longer needed at the problem level, as it's per-vehicle now
+    // @NotNull
+    // @JsonProperty("depot")
+    // private Depot depot;
 
     @NotNull
     @JsonProperty("vehicles")
@@ -38,16 +39,42 @@ public class Problem {
     private Map<Integer, PickupDeliveryTask> tasksByIndex = new HashMap<>();
 
     public void initialize() {
-        depot.setIndex(0);
-        tasksByIndex.put(0, new PickupDeliveryTask(
-            0,
-            depot.getAddress(),
-            depot.getTimeWindow(),
-            depot.getCoordinates(),
-            depot.getId()
-        ));
+        // depot.setIndex(0);  // No longer a single depot
+        // tasksByIndex.put(0, new PickupDeliveryTask( // No longer needed
+        //     0,
+        //     depot.getAddress(),
+        //     depot.getTimeWindow(),
+        //     depot.getCoordinates(),
+        //     depot.getId()
+        // ));
 
-        int index = 1;
+        int index = 0; // Start from 0, as we don't have a global depot anymore
+        for (Vehicle vehicle : vehicles) {
+            //Initialize Start Depot
+            vehicle.getDepotStart().setIndex(index);
+            tasksByIndex.put(index, new PickupDeliveryTask(
+                index,
+                vehicle.getDepotStart().getAddress(),
+                vehicle.getDepotStart().getTimeWindow(),
+                vehicle.getDepotStart().getCoordinates(),
+                vehicle.getDepotStart().getId()
+            ));
+            index++;
+
+              //Initialize End Depot
+            vehicle.getDepotEnd().setIndex(index);
+            tasksByIndex.put(index, new PickupDeliveryTask(
+                index,
+                vehicle.getDepotEnd().getAddress(),
+                vehicle.getDepotEnd().getTimeWindow(),
+                vehicle.getDepotEnd().getCoordinates(),
+                vehicle.getDepotEnd().getId()
+            ));
+            index++;
+
+        }
+
+
         for (RideRequest ride : rideRequests) {
             ride.getPickup().setRide(ride);
             ride.getDelivery().setRide(ride);
@@ -62,21 +89,21 @@ public class Problem {
 
             if (ride.getPickup().getTimeWindow().startSeconds() > ride.getPickup().getTimeWindow().endSeconds())
                 throw new RuntimeException(
-                    String.format("Error with time window from Ride ID %s, Pickup Item", ride.getId())
+                        String.format("Error with time window from Ride ID %s, Pickup Item", ride.getId())
                 );
 
             if (ride.getDelivery().getTimeWindow().startSeconds() > ride.getDelivery().getTimeWindow().endSeconds())
                 throw new RuntimeException(
-                    String.format("Error with time window from Ride ID %s, Delivery Item", ride.getId())
+                        String.format("Error with time window from Ride ID %s, Delivery Item", ride.getId())
                 );
         }
 
-        numberOfNodes = rideRequests.size() * 2 + 1;
+        numberOfNodes = index; // rideRequests.size() * 2 + 1; // Updated for per-vehicle depots
     }
 
     public List<Coordinate> getAllCoordinates() {
         return new ArrayList<>(tasksByIndex.values().stream()
-            .map(PickupDeliveryTask::getCoordinates)
-            .toList());
+                .map(PickupDeliveryTask::getCoordinates)
+                .toList());
     }
 }

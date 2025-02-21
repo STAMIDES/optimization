@@ -112,41 +112,37 @@ public class ORToolsService implements IORToolsService {
         // Set time windows for all nodes, including start and end depots
         for (int i = 0; i < problem.getNumberOfNodes(); i++) {
             PickupDeliveryTask task = problem.getTasksByIndex().get(i);
+            System.out.println("task: " + task + " i: " + i);
             if (task != null) {
-                var index = manager.nodeToIndex(i);
-                 if (task.getTimeWindow().startSeconds() > task.getTimeWindow().endSeconds()) {
+                //var index = manager.nodeToIndex(i);
+                if (task.getTimeWindow().startSeconds() > task.getTimeWindow().endSeconds()) {
                      System.err.println("ERROR: Invalid time window for task index " + i +
                         ". Start: " + task.getTimeWindow().startSeconds() +
                         ", End: " + task.getTimeWindow().endSeconds());
-
-                     //Option A: skip
-                     //continue;
-                     //Option B: Correct
-                     //long temp = task.getTimeWindow().startSeconds();
-                     //task.getTimeWindow().setStart(Duration.ofSeconds(task.getTimeWindow().endSeconds()));
-                     //task.getTimeWindow().setEnd(Duration.ofSeconds(temp));
                 }
-
+                System.out.println("Setting time window for index: " + i);
                 try {
-                    timeDimension.cumulVar(index).setRange(
+                    timeDimension.cumulVar(i).setRange(
                         task.getTimeWindow().startSeconds(),
                         task.getTimeWindow().endSeconds()
                     );
                  } catch (Exception e) {
-                        System.err.println("ERROR setting time window for index: " + index +
+                        System.out.println("ERROR setting time window for index: " + i);
+                        System.err.println("ERROR setting time window for i: " + i +
                             ", Node Index: " + i +
                             ", Start: " + task.getTimeWindow().startSeconds() +
                             ", End: " + task.getTimeWindow().endSeconds() +
                             ", Exception: " + e.getMessage());
-                            // You might choose to re-throw the exception, or handle it differently
-                        throw e; // Re-throwing is often a good choice in this situation.
+                        throw e;
                 }
-
+                System.out.println("Setting slack variable for index: " + i);
+                var solverIndex = manager.nodeToIndex(i);  // Get the solver's internal index
                 if (task.getRide() != null && task.getRide().getPickup().getIndex() == i) {
-                    timeDimension.slackVar(index).setValue(0);
+                    System.out.println("Setting slack variable for index: " + i);
+                    timeDimension.slackVar(solverIndex).setValue(0); // Use the solver's index
                 }
-
-                routing.addToAssignment(timeDimension.slackVar(index));
+                System.out.println("Added to assignment for i: " + i);
+                routing.addToAssignment(timeDimension.slackVar(solverIndex));
             }
             else{
                  System.err.println("WARNING: Task at index " + i + " is null.");
@@ -166,10 +162,10 @@ public class ORToolsService implements IORToolsService {
                     System.err.println("ERROR: Invalid time window for Depot End " + vehicle );
              }
             try{
-                timeDimension.cumulVar(startIndex).setRange(
-                    problem.getVehicles().get(vehicle).getDepotStart().getTimeWindow().startSeconds(),
-                    problem.getVehicles().get(vehicle).getDepotStart().getTimeWindow().endSeconds()
-                );
+            timeDimension.cumulVar(startIndex).setRange(
+                problem.getVehicles().get(vehicle).getDepotStart().getTimeWindow().startSeconds(),
+                problem.getVehicles().get(vehicle).getDepotStart().getTimeWindow().endSeconds()
+            );
             } catch (Exception e) {
                 System.err.println("ERROR setting time window for index: " + vehicle +
                     ", Node Index: " + startIndex +
@@ -219,9 +215,9 @@ public class ORToolsService implements IORToolsService {
                 .setLocalSearchMetaheuristic(LocalSearchMetaheuristic.Value.GUIDED_LOCAL_SEARCH)
                 .setTimeLimit(com.google.protobuf.Duration.newBuilder().setNanos(500000000).build())
                 .build();
-
+        System.out.println("Search params: " + searchParams);
         var assignment = routing.solveWithParameters(searchParams);
-
+        System.out.println("Assignment: " + assignment);
         return buildSolution(problem, routing, manager, assignment, timeMatrix);
     }
 
@@ -264,7 +260,8 @@ public class ORToolsService implements IORToolsService {
             var route = new Route();
             var problemVehicle = problem.getVehicles().get(vehicle);
             route.setVehicleId(problemVehicle.getId());
-            route.setTimeWindow(problemVehicle.getTimeWindow());
+            // Remove setting the route's time window from the vehicle:
+            // route.setTimeWindow(problemVehicle.getTimeWindow());
             int nodeIndex;
             int position = 0;
             long index = routing.start(vehicle);

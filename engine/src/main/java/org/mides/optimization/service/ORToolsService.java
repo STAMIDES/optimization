@@ -24,35 +24,28 @@ public class ORToolsService implements IORToolsService {
         Objects.requireNonNull(distanceMatrix, "Distance matrix cannot be null");
         Objects.requireNonNull(timeMatrix, "Time matrix cannot be null");
 
-
         int numVehicles = problem.getVehicles().size();
         List<Integer> startIndices = new ArrayList<>();
-        List<Integer> endIndices = new ArrayList<>();
         System.out.println("Num Vehicles: " + numVehicles);
         for (int i = 0; i < numVehicles; i++) {
             Vehicle vehicle = problem.getVehicles().get(i);
-            Objects.requireNonNull(vehicle, "Vehicle cannot be null");
-            Objects.requireNonNull(vehicle.getDepotStart(), "Vehicle depotStart cannot be null");
-            Objects.requireNonNull(vehicle.getDepotEnd(), "Vehicle depotEnd cannot be null");
-
+            Objects.requireNonNull(vehicle, "Vehicle depotStart cannot be null");
             startIndices.add(vehicle.getDepotStart().getIndex());
-            endIndices.add(vehicle.getDepotEnd().getIndex());
         }
         System.out.println("Start Indices: " + startIndices);
-
 
         var manager = new RoutingIndexManager(
                 problem.getNumberOfNodes(),
                 numVehicles,
                 startIndices.stream().mapToInt(Integer::intValue).toArray(),
-                endIndices.stream().mapToInt(Integer::intValue).toArray()
+                startIndices.stream().mapToInt(Integer::intValue).toArray()
         );
         System.out.println("Manager: " + manager);
         var routing = new RoutingModel(manager);
         System.out.println("Routing: " + routing);
+
         /* Allow dropping nodes */
         for (int i = 0; i < problem.getNumberOfNodes(); i++) {
-            //Skip Start and End Depots
             final int currentNodeIndex = i;
             PickupDeliveryTask task = problem.getTasksByIndex().get(currentNodeIndex);
             if (task != null &&
@@ -63,6 +56,7 @@ public class ORToolsService implements IORToolsService {
             {
                 continue;
             }
+            System.out.println("Routing after drop: " + i);
             routing.addDisjunction(new long[] { manager.nodeToIndex(currentNodeIndex) }, DROP_PENALTY);
         }
         System.out.println("Routing after drop: " + routing);
@@ -72,7 +66,7 @@ public class ORToolsService implements IORToolsService {
             var toNode = manager.indexToNode(toIndex);
              if (fromNode < 0 || fromNode >= distanceMatrix.length || toNode < 0 || toNode >= distanceMatrix[fromNode].length) {
                 System.err.println("ERROR: Index out of bounds in distance callback. fromNode: " + fromNode + ", toNode: " + toNode);
-                return 0; // Or some other appropriate error handling
+                return 0;
             }
             return distanceMatrix[fromNode][toNode];
         });
@@ -102,19 +96,18 @@ public class ORToolsService implements IORToolsService {
         System.out.println("Time Callback Index: " + timeCallbackIndex);
         routing.addDimension(
                 timeCallbackIndex,
-                Long.MAX_VALUE, /* Allow waiting time */
-                Long.MAX_VALUE, /* Max duration per vehicle */
-                false, /* Don't force to start cumulative var at zero*/
+                Long.MAX_VALUE,
+                Long.MAX_VALUE,
+                false,
                 "time"
         );
         var timeDimension = routing.getMutableDimension("time");
         System.out.println("Time Dimension: " + timeDimension);
-        // Set time windows for all nodes, including start and end depots
+        // Set time windows for all nodes
         for (int i = 0; i < problem.getNumberOfNodes(); i++) {
             PickupDeliveryTask task = problem.getTasksByIndex().get(i);
             System.out.println("task: " + task + " i: " + i);
             if (task != null) {
-                //var index = manager.nodeToIndex(i);
                 if (task.getTimeWindow().startSeconds() > task.getTimeWindow().endSeconds()) {
                      System.err.println("ERROR: Invalid time window for task index " + i +
                         ". Start: " + task.getTimeWindow().startSeconds() +
@@ -135,12 +128,7 @@ public class ORToolsService implements IORToolsService {
                             ", Exception: " + e.getMessage());
                         throw e;
                 }
-                System.out.println("Setting slack variable for index: " + i);
-                var solverIndex = manager.nodeToIndex(i);  // Get the solver's internal index
-                if (task.getRide() != null && task.getRide().getPickup().getIndex() == i) {
-                    System.out.println("Setting slack variable for index: " + i);
-                    timeDimension.slackVar(solverIndex).setValue(0); // Use the solver's index
-                }
+                var solverIndex = manager.nodeToIndex(i);
                 System.out.println("Added to assignment for i: " + i);
                 routing.addToAssignment(timeDimension.slackVar(solverIndex));
             }
@@ -150,17 +138,14 @@ public class ORToolsService implements IORToolsService {
         }
 
         System.out.println("Routing after time: " + routing);
-        for (int vehicle = 0; vehicle < numVehicles; vehicle++)
-        {
+
+        for (int vehicle = 0; vehicle < numVehicles; vehicle++) {
             int startIndex = (int) manager.nodeToIndex(startIndices.get(vehicle));
-            int endIndex = (int) manager.nodeToIndex(endIndices.get(vehicle));
 
              if (problem.getVehicles().get(vehicle).getDepotStart().getTimeWindow().startSeconds() >  problem.getVehicles().get(vehicle).getDepotStart().getTimeWindow().endSeconds()) {
                     System.err.println("ERROR: Invalid time window for Depot Start " + vehicle );
              }
-             if (problem.getVehicles().get(vehicle).getDepotEnd().getTimeWindow().startSeconds() >  problem.getVehicles().get(vehicle).getDepotEnd().getTimeWindow().endSeconds()) {
-                    System.err.println("ERROR: Invalid time window for Depot End " + vehicle );
-             }
+
             try{
             timeDimension.cumulVar(startIndex).setRange(
                 problem.getVehicles().get(vehicle).getDepotStart().getTimeWindow().startSeconds(),
@@ -172,17 +157,20 @@ public class ORToolsService implements IORToolsService {
                     ", Start: " + problem.getVehicles().get(vehicle).getDepotStart().getTimeWindow().startSeconds() +
                     ", End: " + problem.getVehicles().get(vehicle).getDepotStart().getTimeWindow().endSeconds() +
                     ", Exception: " + e.getMessage());
-                throw e; // Re-throwing is often a good choice in this situation.
+                throw e;
             }
 
-            routing.addVariableMaximizedByFinalizer(
-                    timeDimension.cumulVar(startIndex)
-            );
-            routing.addVariableMinimizedByFinalizer(
-                    timeDimension.cumulVar(endIndex)
-            );
+            long vehicleEnd =  problem.getVehicles().get(vehicle).getDepotEnd().getTimeWindow().endSeconds();
+            routing.addDimension(timeCallbackIndex,
+                vehicleEnd,
+                vehicleEnd,
+                false,
+                "Dimension_Vehicle_"+ vehicle
+        );
         }
+
         System.out.println("Routing after depot: " + routing);
+
         /* Add pickup-delivery constraints */
         var solver = routing.solver();
         for (var ride : problem.getRideRequests()) {
@@ -220,7 +208,6 @@ public class ORToolsService implements IORToolsService {
         System.out.println("Assignment: " + assignment);
         return buildSolution(problem, routing, manager, assignment, timeMatrix);
     }
-
     private static Solution buildSolution(
             Problem problem,
             RoutingModel routing,
@@ -252,7 +239,6 @@ public class ORToolsService implements IORToolsService {
             }
         }
 
-        /* Routes */
         var timeDimension = routing.getMutableDimension("time");
         var distanceDimension = routing.getMutableDimension("distance");
 
@@ -260,12 +246,9 @@ public class ORToolsService implements IORToolsService {
             var route = new Route();
             var problemVehicle = problem.getVehicles().get(vehicle);
             route.setVehicleId(problemVehicle.getId());
-            // Remove setting the route's time window from the vehicle:
-            // route.setTimeWindow(problemVehicle.getTimeWindow());
             int nodeIndex;
             int position = 0;
             long index = routing.start(vehicle);
-
 
             while (!routing.isEnd(index)) {
                 nodeIndex = manager.indexToNode(index);
@@ -283,9 +266,10 @@ public class ORToolsService implements IORToolsService {
                 visit.setArrivalTime(Duration.ofSeconds(assignment.min(timeDimension.cumulVar(index))));
                 visit.setTravelTimeToNextVisit(Duration.ofSeconds(timeMatrix[nodeIndex][nextNodeIndex]));
                 visit.setSolutionWindow(new TimeWindow(
-                        Duration.ofSeconds(assignment.min(timeDimension.cumulVar(index))),
-                        Duration.ofSeconds(assignment.max(timeDimension.cumulVar(index)))
+                        Duration.ofSeconds(assignment.min(timeDimension.cumulVar(index))), 
+                        Duration.ofSeconds(assignment.max(timeDimension.cumulVar(index))) 
                 ));
+
                 visit.setType(taskNodeIndex.getType());
                 visit.setStopId(taskNodeIndex.getStopId());
 
@@ -293,35 +277,20 @@ public class ORToolsService implements IORToolsService {
                 index = assignment.value(routing.nextVar(index));
             }
 
-            nodeIndex = manager.indexToNode(index);
-            var taskNodeIndex = problem.getTasksByIndex().get(nodeIndex);
-            var ride = taskNodeIndex.getRide();
-
-            Visit lastVisit = new Visit();
-            lastVisit.setPosition(position);
-            lastVisit.setRideId(ride != null ? ride.getId() : null);
-            lastVisit.setUserId(ride != null ? ride.getUserId() : null);
-            lastVisit.setRideDirection(ride != null ? ride.getDirection() : null);
-            lastVisit.setAddress(taskNodeIndex.getAddress());
-            lastVisit.setCoordinates(taskNodeIndex.getCoordinates());
-            lastVisit.setArrivalTime(Duration.ofSeconds(assignment.min(timeDimension.cumulVar(index))));
-            lastVisit.setTravelTimeToNextVisit(Duration.ZERO);
-            lastVisit.setSolutionWindow(new TimeWindow(
-                    Duration.ofSeconds(assignment.min(timeDimension.cumulVar(index))),
-                    Duration.ofSeconds(assignment.max(timeDimension.cumulVar(index)))
-            ));
-            lastVisit.setType(taskNodeIndex.getType());
-            lastVisit.setStopId(taskNodeIndex.getStopId());
-
-            route.getVisits().add(lastVisit);
-
-            var endTime = route.getVisits().get(route.getVisits().size() - 1).getArrivalTime();
-            var startTime = route.getVisits().get(0).getArrivalTime();
-            route.setDuration(endTime.minus(startTime));
-            route.setDistance(Utils.convertDistanceBack(assignment.value(distanceDimension.cumulVar(index))));
-            if (route.getVisits().size() > 2) solution.getRoutes().add(route);
+            // Calculate duration and distance:
+            if (!route.getVisits().isEmpty()) { // Check for empty routes
+                var endTime = route.getVisits().get(route.getVisits().size() - 1).getArrivalTime();
+                var startTime = route.getVisits().get(0).getArrivalTime();
+                route.setDuration(endTime.minus(startTime));
+                route.setDistance(Utils.convertDistanceBack(assignment.value(distanceDimension.cumulVar(index))));
+            }
+            // Add route only if there's more than just the start depot
+            if (route.getVisits().size() > 2) {
+                solution.getRoutes().add(route);
+            }
         }
 
         return solution;
     }
+
 }

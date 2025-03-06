@@ -31,7 +31,4 @@ public class Route {
     @JsonProperty("geometry")
     private List<List<Double>> geometry = new ArrayList<>();
 
-    // Remove the timeWindow field, not needed anymore
-    //@JsonProperty("time_window")
-    //private TimeWindow timeWindow = new TimeWindow();
 }

@@ -39,16 +39,7 @@ public class Problem {
     private Map<Integer, PickupDeliveryTask> tasksByIndex = new HashMap<>();
 
     public void initialize() {
-        // depot.setIndex(0);  // No longer a single depot
-        // tasksByIndex.put(0, new PickupDeliveryTask( // No longer needed
-        //     0,
-        //     depot.getAddress(),
-        //     depot.getTimeWindow(),
-        //     depot.getCoordinates(),
-        //     depot.getId()
-        // ));
-
-        int index = 0; // Start from 0, as we don't have a global depot anymore
+        int index = 0; 
         for (Vehicle vehicle : vehicles) {
             //Initialize Start Depot
             vehicle.getDepotStart().setIndex(index);
@@ -98,7 +89,7 @@ public class Problem {
                 );
         }
 
-        numberOfNodes = index; // rideRequests.size() * 2 + 1; // Updated for per-vehicle depots
+        numberOfNodes = index + 1; 
     }
 
     public List<Coordinate> getAllCoordinates() {

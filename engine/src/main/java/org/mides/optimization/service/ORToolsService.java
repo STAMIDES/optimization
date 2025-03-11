@@ -26,19 +26,22 @@ public class ORToolsService implements IORToolsService {
 
         int numVehicles = problem.getVehicles().size();
         List<Integer> startIndices = new ArrayList<>();
+        List<Integer> endIndices = new ArrayList<>();
         System.out.println("Num Vehicles: " + numVehicles);
         for (int i = 0; i < numVehicles; i++) {
             Vehicle vehicle = problem.getVehicles().get(i);
             Objects.requireNonNull(vehicle, "Vehicle depotStart cannot be null");
             startIndices.add(vehicle.getDepotStart().getIndex());
+            endIndices.add(vehicle.getDepotEnd().getIndex());
         }
         System.out.println("Start Indices: " + startIndices);
+        System.out.println("End Indices: " + endIndices);
 
         var manager = new RoutingIndexManager(
                 problem.getNumberOfNodes(),
                 numVehicles,
                 startIndices.stream().mapToInt(Integer::intValue).toArray(),
-                startIndices.stream().mapToInt(Integer::intValue).toArray()
+                endIndices.stream().mapToInt(Integer::intValue).toArray()
         );
         System.out.println("Manager: " + manager);
         var routing = new RoutingModel(manager);
@@ -122,7 +125,7 @@ public class ORToolsService implements IORToolsService {
                  } catch (Exception e) {
                         System.out.println("ERROR setting time window for index: " + i);
                         System.err.println("ERROR setting time window for i: " + i +
-                            ", Node Index: " + i +
+                            ", Node Index: " + manager.nodeToIndex(i) +
                             ", Start: " + task.getTimeWindow().startSeconds() +
                             ", End: " + task.getTimeWindow().endSeconds() +
                             ", Exception: " + e.getMessage());
@@ -279,7 +282,26 @@ public class ORToolsService implements IORToolsService {
                 route.getVisits().add(visit);
                 index = assignment.value(routing.nextVar(index));
             }
+            Visit lastVisit = new Visit();
+            nodeIndex = manager.indexToNode(index);
+            var taskNodeIndex = problem.getTasksByIndex().get(nodeIndex);
+            var ride = taskNodeIndex.getRide();
+            lastVisit.setPosition(position);
+            lastVisit.setRideId(ride != null ? ride.getId() : null);
+            lastVisit.setUserId(ride != null ? ride.getUserId() : null);
+            lastVisit.setRideDirection(ride != null ? ride.getDirection() : null);
+            lastVisit.setAddress(taskNodeIndex.getAddress());
+            lastVisit.setCoordinates(taskNodeIndex.getCoordinates());
+            lastVisit.setArrivalTime(Duration.ofSeconds(assignment.min(timeDimension.cumulVar(index))));
+            lastVisit.setTravelTimeToNextVisit(Duration.ZERO);
+            lastVisit.setSolutionWindow(new TimeWindow(
+                Duration.ofSeconds(assignment.min(timeDimension.cumulVar(index))),
+                Duration.ofSeconds(assignment.max(timeDimension.cumulVar(index)))
+            ));
+            lastVisit.setType(taskNodeIndex.getType());
+            lastVisit.setStopId(taskNodeIndex.getStopId());
 
+            route.getVisits().add(lastVisit);
             // Calculate duration and distance:
             if (!route.getVisits().isEmpty()) { // Check for empty routes
                 var endTime = route.getVisits().get(route.getVisits().size() - 1).getArrivalTime();

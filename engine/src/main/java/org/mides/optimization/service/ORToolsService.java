@@ -104,7 +104,7 @@ public class ORToolsService implements IORToolsService {
         var timeDimension = routing.getMutableDimension("time");
         System.out.println("Time Dimension: " + timeDimension);
         // Set time windows for all nodes
-        for (int i = 0; i < problem.getNumberOfNodes(); i++) {
+        for (int i = problem.getVehicles().size()*2; i < problem.getNumberOfNodes(); i++) {
             PickupDeliveryTask task = problem.getTasksByIndex().get(i);
             System.out.println("task: " + task + " i: " + i);
             if (task != null) {
@@ -130,6 +130,9 @@ public class ORToolsService implements IORToolsService {
                 }
                 var solverIndex = manager.nodeToIndex(i);
                 System.out.println("Added to assignment for i: " + i);
+                if (task.getRide().getPickup().getIndex() == i){
+                    timeDimension.slackVar(solverIndex).setValue(0);
+                }
                 routing.addToAssignment(timeDimension.slackVar(solverIndex));
             }
             else{

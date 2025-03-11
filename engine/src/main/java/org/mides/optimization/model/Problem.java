@@ -89,7 +89,7 @@ public class Problem {
                 );
         }
 
-        numberOfNodes = index + 1; 
+        numberOfNodes = index; 
     }
 
     public List<Coordinate> getAllCoordinates() {

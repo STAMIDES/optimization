@@ -16,15 +16,25 @@ public class ORToolsService implements IORToolsService {
 
     @Override
     public Solution solve(Problem problem, long[][] distanceMatrix, long[][] timeMatrix) {
+        var starts = new int[problem.getVehicles().size()];
+        var ends = new int[problem.getVehicles().size()];
+
+        for (int i = 0; i < problem.getVehicles().size(); i++) {
+            var vehicle = problem.getVehicles().get(i);
+            starts[i] = vehicle.getDepotStart().getIndex();
+            ends[i] = vehicle.getDepotEnd().getIndex();
+        }
+
         var manager = new RoutingIndexManager(
             problem.getNumberOfNodes(),
             problem.getVehicles().size(),
-            0
+            starts,
+            ends
         );
         var routing = new RoutingModel(manager);
 
         /* Allow dropping nodes */
-        for (int i = 1; i < problem.getNumberOfNodes(); i++) {
+        for (int i = problem.getVehicles().size() * 2; i < problem.getNumberOfNodes(); i++) {
             routing.addDisjunction(new long[] { manager.nodeToIndex(i) }, DROP_PENALTY);
         }
 
@@ -60,7 +70,7 @@ public class ORToolsService implements IORToolsService {
             "time"
         );
         var timeDimension = routing.getMutableDimension("time");
-        for (var i = 1; i < problem.getNumberOfNodes(); i++)
+        for (var i = problem.getVehicles().size() * 2; i < problem.getNumberOfNodes(); i++)
         {
             var index = manager.nodeToIndex(i);
             timeDimension.cumulVar(index).setRange(
@@ -72,13 +82,14 @@ public class ORToolsService implements IORToolsService {
             routing.addToAssignment(timeDimension.slackVar(index));
         }
 
-        for (var vehicle = 0; vehicle < problem.getVehicles().size(); vehicle++)
-        {
-            var index = routing.start(vehicle);
+        int vehicleIndex = 0;
+        for (var vehicle : problem.getVehicles()) {
+            var index = routing.start(vehicleIndex);
             timeDimension.cumulVar(index).setRange(
-                problem.getDepot().getTimeWindow().startSeconds(),
-                problem.getDepot().getTimeWindow().endSeconds()
+                vehicle.getDepotStart().getTimeWindow().startSeconds(),
+                vehicle.getDepotEnd().getTimeWindow().endSeconds()
             );
+            vehicleIndex++;
         }
 
         for (var vehicle = 0; vehicle < problem.getVehicles().size(); vehicle++)
@@ -170,7 +181,10 @@ public class ORToolsService implements IORToolsService {
             var route = new Route();
             var problemVehicle = problem.getVehicles().get(vehicle);
             route.setVehicleId(problemVehicle.getId());
-            route.setTimeWindow(problemVehicle.getTimeWindow());
+            route.setTimeWindow(new TimeWindow(
+                Duration.ofSeconds(problemVehicle.getDepotStart().getTimeWindow().startSeconds()),
+                Duration.ofSeconds(problemVehicle.getDepotEnd().getTimeWindow().endSeconds()))
+            );
             int nodeIndex;
             int position = 0;
             long index = routing.start(vehicle);

@@ -18,10 +18,6 @@ import java.util.Map;
 public class Problem {
 
     @NotNull
-    @JsonProperty("depot")
-    private Depot depot;
-
-    @NotNull
     @JsonProperty("vehicles")
     private List<Vehicle> vehicles = new ArrayList<>();
 
@@ -38,16 +34,30 @@ public class Problem {
     private Map<Integer, PickupDeliveryTask> tasksByIndex = new HashMap<>();
 
     public void initialize() {
-        depot.setIndex(0);
-        tasksByIndex.put(0, new PickupDeliveryTask(
-            0,
-            depot.getAddress(),
-            depot.getTimeWindow(),
-            depot.getCoordinates(),
-            depot.getId()
-        ));
 
-        int index = 1;
+        int index = 0;
+        for (Vehicle vehicle : vehicles) {
+            vehicle.getDepotStart().setIndex(index);
+            tasksByIndex.put(index, new PickupDeliveryTask(
+                index,
+                vehicle.getDepotStart().getAddress(),
+                vehicle.getDepotStart().getTimeWindow(),
+                vehicle.getDepotStart().getCoordinates(),
+                vehicle.getDepotStart().getId()
+            ));
+            index = index + 1;
+
+            vehicle.getDepotEnd().setIndex(index);
+            tasksByIndex.put(index, new PickupDeliveryTask(
+                index,
+                vehicle.getDepotEnd().getAddress(),
+                vehicle.getDepotEnd().getTimeWindow(),
+                vehicle.getDepotEnd().getCoordinates(),
+                vehicle.getDepotEnd().getId()
+            ));
+            index = index + 1;
+        }
+
         for (RideRequest ride : rideRequests) {
             ride.getPickup().setRide(ride);
             ride.getDelivery().setRide(ride);
@@ -71,7 +81,7 @@ public class Problem {
                 );
         }
 
-        numberOfNodes = rideRequests.size() * 2 + 1;
+        numberOfNodes = rideRequests.size() * 2 + vehicles.size() * 2;
     }
 
     public List<Coordinate> getAllCoordinates() {

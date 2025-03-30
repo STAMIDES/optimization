@@ -130,6 +130,42 @@ public class ORToolsService implements IORToolsService {
             ));
         }
 
+        // --- HARD TIME WINDOW CONSTRAINTS FOR VEHICLES (CORRECTED) ---
+        vehicleIndex = 0;
+        for (var vehicle : problem.getVehicles()) {
+            long vehicleStartTime = vehicle.getDepotStart().getTimeWindow().startSeconds();
+            long vehicleEndTime = vehicle.getDepotEnd().getTimeWindow().endSeconds();
+        
+            for (var ride : problem.getRideRequests()) {
+                // Pickup constraints
+                long pickupIndex = manager.nodeToIndex(ride.getPickup().getIndex());
+                IntVar vehicleVar = routing.vehicleVar(pickupIndex);
+                IntVar pickupTime = timeDimension.cumulVar(pickupIndex);
+        
+                // Create a boolean variable: isVehicleUsedForPickup = (vehicleVar == vehicleIndex)
+                IntVar isVehicleUsedForPickup = solver.makeIsEqualCstVar(vehicleVar, vehicleIndex);
+        
+                // Create boolean variables for the time window constraints
+                IntVar isTimeGreaterThanStart = solver.makeIsGreaterOrEqualCstVar(pickupTime, vehicleStartTime);
+                IntVar isTimeLessThanEnd = solver.makeIsLessOrEqualCstVar(pickupTime, vehicleEndTime);
+        
+                // Enforce the implications A => B  <=> A <= B
+                solver.addConstraint(solver.makeLessOrEqual(isVehicleUsedForPickup, isTimeGreaterThanStart));
+                solver.addConstraint(solver.makeLessOrEqual(isVehicleUsedForPickup, isTimeLessThanEnd));
+        
+                // Delivery constraints (same logic, using the *same* isVehicleUsedForPickup)
+                long deliveryIndex = manager.nodeToIndex(ride.getDelivery().getIndex());
+                IntVar deliveryTime = timeDimension.cumulVar(deliveryIndex);
+        
+                IntVar isDeliveryTimeGreaterThanStart = solver.makeIsGreaterOrEqualCstVar(deliveryTime, vehicleStartTime);
+                IntVar isDeliveryTimeLessThanEnd = solver.makeIsLessOrEqualCstVar(deliveryTime, vehicleEndTime);
+                solver.addConstraint(solver.makeLessOrEqual(isVehicleUsedForPickup, isDeliveryTimeGreaterThanStart));
+                solver.addConstraint(solver.makeLessOrEqual(isVehicleUsedForPickup, isDeliveryTimeLessThanEnd));
+            }
+            vehicleIndex++;
+        }
+        // --- END HARD TIME WINDOW CONSTRAINTS ---
+
         var searchParams = main.defaultRoutingSearchParameters()
             .toBuilder()
             .setFirstSolutionStrategy(FirstSolutionStrategy.Value.PATH_CHEAPEST_ARC)

@@ -15,6 +15,9 @@ public class Vehicle {
     @JsonProperty("capacity")
     private double capacity;
 
+    @JsonProperty("has_wheelchair")
+    private boolean hasWheelchair;
+
     @NotNull
     @JsonProperty("depot_start")
     private Depot depotStart;

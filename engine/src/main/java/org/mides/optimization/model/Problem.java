@@ -89,4 +89,65 @@ public class Problem {
             .map(PickupDeliveryTask::getCoordinates)
             .toList());
     }
+
+    public long[] getDemands() {
+        if (numberOfNodes == 0)
+            throw new RuntimeException("Problem not initialized");
+
+        var vehicleCapacities = new long[tasksByIndex.size()];
+
+        /* Set demand for depots to 0 */
+        for (int i = 0; i < vehicles.size() * 2; i++) {
+            vehicleCapacities[i] = 0;
+        }
+
+        /* Pickup adds 1 and delivery subtracts 1. If it has companion add/subtract 2 */
+        int counter = vehicles.size() * 2;
+        for (RideRequest ride : rideRequests) {
+            if (ride.isHasCompanion()) {
+                vehicleCapacities[counter] = 2; // Pickup
+                vehicleCapacities[counter + 1] = -2; // Delivery
+            } else {
+                vehicleCapacities[counter] = 1; // Pickup
+                vehicleCapacities[counter + 1] = -1; // Delivery
+            }
+            counter += 2;
+        }
+
+        return vehicleCapacities;
+    }
+
+    public List<Integer> getWheelchairIndexes() {
+        if (numberOfNodes == 0)
+            throw new RuntimeException("Problem not initialized");
+
+        var result = new ArrayList<Integer>();
+        int counter = vehicles.size() * 2;
+        for (RideRequest ride : rideRequests) {
+            if (ride.isWheelchairRequired()) {
+                result.add(counter); // Pickup
+                result.add(counter + 1); // Delivery
+            }
+            counter += 2;
+        }
+        return result;
+    }
+
+    public long[] getNoWheelchairVehicleIndexes() {
+        if (numberOfNodes == 0)
+            throw new RuntimeException("Problem not initialized");
+
+        var result = new ArrayList<Integer>();
+        int counter = 0;
+        for (var vehicle : vehicles) {
+            if (!vehicle.isHasWheelchair())
+                result.add(counter);
+        }
+        long[] resultArray = new long[result.size()];
+        for (int i = 0; i < result.size(); i++) {
+            resultArray[i] = result.get(i);
+        }
+
+        return resultArray;
+    }
 }

@@ -101,11 +101,35 @@ public class ORToolsService implements IORToolsService {
                 timeDimension.cumulVar(routing.end(vehicle))
             );
         }
+        /* Add capacity constraints */
+        var solver = routing.solver();
+        var demands = problem.getDemands();
+        final int demandCallbackIndex = routing.registerUnaryTransitCallback((long fromIndex) -> {
+            int fromNode = manager.indexToNode(fromIndex);
+            return demands[fromNode];
+        });
 
-        /* TO DO: Add capacity constraints */
+        var vehicleCapacities = new long[problem.getVehicles().size()];
+        for (int i = 0; i < problem.getVehicles().size(); i++) {
+            var vehicle = problem.getVehicles().get(i);
+            vehicleCapacities[i] = (long)vehicle.getCapacity();
+        }
+
+        routing.addDimensionWithVehicleCapacity(demandCallbackIndex,
+            0,
+            vehicleCapacities,
+            true,
+            "capacity"
+        );
+
+        /* Wheelchair constraints */
+        var vehiclesWithoutRamp = problem.getNoWheelchairVehicleIndexes();
+        for (var wheelchairNode : problem.getWheelchairIndexes()) {
+            var index = manager.nodeToIndex(wheelchairNode);
+            routing.vehicleVar(index).removeValues(vehiclesWithoutRamp);
+        }
 
         /* Add pickup-delivery constraints */
-        var solver = routing.solver();
         for (var ride : problem.getRideRequests()) {
             var pickupIndex = manager.nodeToIndex(ride.getPickup().getIndex());
             var deliveryIndex = manager.nodeToIndex(ride.getDelivery().getIndex());

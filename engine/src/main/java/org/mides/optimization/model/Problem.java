@@ -1,3 +1,4 @@
+// engine/src/main/java/org/mides/optimization/model/Problem.java
 package org.mides.optimization.model;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
@@ -9,6 +10,7 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 import java.util.ArrayList;
+import java.util.Comparator; // <--- ADD THIS IMPORT
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -16,6 +18,13 @@ import java.util.Map;
 @Data
 @NoArgsConstructor
 public class Problem {
+
+    // Task Types Constants (recommended over raw strings)
+    public static final String TASK_TYPE_DEPOT_START = "DEPOT_START";
+    public static final String TASK_TYPE_DEPOT_END = "DEPOT_END";
+    public static final String TASK_TYPE_PICKUP = "PICKUP";
+    public static final String TASK_TYPE_DELIVERY = "DELIVERY";
+
 
     @NotNull
     @JsonProperty("vehicles")
@@ -34,120 +43,91 @@ public class Problem {
     private Map<Integer, PickupDeliveryTask> tasksByIndex = new HashMap<>();
 
     public void initialize() {
-
+        tasksByIndex.clear(); // Clear map before initializing
         int index = 0;
+
+        // Process Vehicle Depots
         for (Vehicle vehicle : vehicles) {
+            // Start Depot
             vehicle.getDepotStart().setIndex(index);
-            tasksByIndex.put(index, new PickupDeliveryTask(
+            PickupDeliveryTask startDepotTask = new PickupDeliveryTask(
                 index,
                 vehicle.getDepotStart().getAddress(),
                 vehicle.getDepotStart().getTimeWindow(),
                 vehicle.getDepotStart().getCoordinates(),
-                vehicle.getDepotStart().getId()
-            ));
-            index = index + 1;
+                vehicle.getDepotStart().getId() // Use depot ID as stop ID?
+            );
+            startDepotTask.setType(TASK_TYPE_DEPOT_START); // Set type
+            tasksByIndex.put(index, startDepotTask);
+            index++; // Increment index
 
+            // End Depot
             vehicle.getDepotEnd().setIndex(index);
-            tasksByIndex.put(index, new PickupDeliveryTask(
+             PickupDeliveryTask endDepotTask = new PickupDeliveryTask(
                 index,
                 vehicle.getDepotEnd().getAddress(),
                 vehicle.getDepotEnd().getTimeWindow(),
                 vehicle.getDepotEnd().getCoordinates(),
-                vehicle.getDepotEnd().getId()
-            ));
-            index = index + 1;
+                vehicle.getDepotEnd().getId() // Use depot ID as stop ID?
+            );
+            endDepotTask.setType(TASK_TYPE_DEPOT_END); // Set type
+            tasksByIndex.put(index, endDepotTask);
+            index++; // Increment index
         }
 
+        // Process Ride Requests
         for (RideRequest ride : rideRequests) {
+            // Link task back to ride
             ride.getPickup().setRide(ride);
             ride.getDelivery().setRide(ride);
 
+            // Assign indices
             ride.getPickup().setIndex(index);
             ride.getDelivery().setIndex(index + 1);
 
+            // Set Task Types
+            ride.getPickup().setType(TASK_TYPE_PICKUP);
+            ride.getDelivery().setType(TASK_TYPE_DELIVERY);
+
+            // Add to map
             tasksByIndex.put(index, ride.getPickup());
             tasksByIndex.put(index + 1, ride.getDelivery());
 
-            index += 2;
+            index += 2; // Increment index by 2 (for pickup and delivery)
 
-            if (ride.getPickup().getTimeWindow().startSeconds() > ride.getPickup().getTimeWindow().endSeconds())
+            // Validate time windows (existing logic is good)
+            if (ride.getPickup().getTimeWindow() != null && // Add null check
+                ride.getPickup().getTimeWindow().startSeconds() > ride.getPickup().getTimeWindow().endSeconds())
                 throw new RuntimeException(
-                    String.format("Error with time window from Ride ID %s, Pickup Item", ride.getId())
+                    String.format("Error with time window from Ride ID %s, Pickup Item: start > end", ride.getId())
                 );
 
-            if (ride.getDelivery().getTimeWindow().startSeconds() > ride.getDelivery().getTimeWindow().endSeconds())
+            if (ride.getDelivery().getTimeWindow() != null && // Add null check
+                ride.getDelivery().getTimeWindow().startSeconds() > ride.getDelivery().getTimeWindow().endSeconds())
                 throw new RuntimeException(
-                    String.format("Error with time window from Ride ID %s, Delivery Item", ride.getId())
+                    String.format("Error with time window from Ride ID %s, Delivery Item: start > end", ride.getId())
                 );
         }
 
-        numberOfNodes = rideRequests.size() * 2 + vehicles.size() * 2;
+        numberOfNodes = index; // Total number of nodes is the final index value
     }
 
     public List<Coordinate> getAllCoordinates() {
-        return new ArrayList<>(tasksByIndex.values().stream()
+        // Ensure consistent ordering based on index for matrix generation
+        List<PickupDeliveryTask> sortedTasks = new ArrayList<>(tasksByIndex.values());
+        // Sort by index - Requires Comparator import
+        sortedTasks.sort(Comparator.comparingInt(PickupDeliveryTask::getIndex));
+
+        return sortedTasks.stream()
             .map(PickupDeliveryTask::getCoordinates)
-            .toList());
+            .toList();
     }
 
-    public long[] getDemands() {
-        if (numberOfNodes == 0)
-            throw new RuntimeException("Problem not initialized");
+    // Helper method to get task by index (already present via getTasksByIndex())
 
-        var vehicleCapacities = new long[tasksByIndex.size()];
-
-        /* Set demand for depots to 0 */
-        for (int i = 0; i < vehicles.size() * 2; i++) {
-            vehicleCapacities[i] = 0;
-        }
-
-        /* Pickup adds 1 and delivery subtracts 1. If it has companion add/subtract 2 */
-        int counter = vehicles.size() * 2;
-        for (RideRequest ride : rideRequests) {
-            if (ride.isHasCompanion()) {
-                vehicleCapacities[counter] = 2; // Pickup
-                vehicleCapacities[counter + 1] = -2; // Delivery
-            } else {
-                vehicleCapacities[counter] = 1; // Pickup
-                vehicleCapacities[counter + 1] = -1; // Delivery
-            }
-            counter += 2;
-        }
-
-        return vehicleCapacities;
-    }
-
-    public List<Integer> getWheelchairIndexes() {
-        if (numberOfNodes == 0)
-            throw new RuntimeException("Problem not initialized");
-
-        var result = new ArrayList<Integer>();
-        int counter = vehicles.size() * 2;
-        for (RideRequest ride : rideRequests) {
-            if (ride.isWheelchairRequired()) {
-                result.add(counter); // Pickup
-                result.add(counter + 1); // Delivery
-            }
-            counter += 2;
-        }
-        return result;
-    }
-
-    public long[] getNoWheelchairVehicleIndexes() {
-        if (numberOfNodes == 0)
-            throw new RuntimeException("Problem not initialized");
-
-        var result = new ArrayList<Integer>();
-        int counter = 0;
-        for (var vehicle : vehicles) {
-            if (!vehicle.isHasWheelchair())
-                result.add(counter);
-        }
-        long[] resultArray = new long[result.size()];
-        for (int i = 0; i < result.size(); i++) {
-            resultArray[i] = result.get(i);
-        }
-
-        return resultArray;
+    // Helper method to get the first index after depots (useful for loops)
+    @JsonIgnore
+    public int getFirstTaskNodeIndex() {
+        return vehicles.size() * 2;
     }
 }

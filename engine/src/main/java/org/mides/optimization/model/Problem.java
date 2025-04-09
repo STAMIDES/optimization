@@ -89,4 +89,74 @@ public class Problem {
             .map(PickupDeliveryTask::getCoordinates)
             .toList());
     }
+
+    public long[] getSeatDemands() {
+        var seatDemands = new long[tasksByIndex.size()];
+
+        /* Set demand for depots to 0 */
+        for (int i = 0; i < vehicles.size() * 2; i++) {
+            seatDemands[i] = 0;
+        }
+
+        /* Pickup adds and delivery subtracts. */
+        int counter = vehicles.size() * 2;
+        for (RideRequest ride : rideRequests) {
+            int demand = 0;
+            if (!ride.isWheelchairRequired())
+                demand += 1;
+            if (ride.isHasCompanion())
+                demand += 1;
+
+            seatDemands[counter] = demand; // Pickup
+            seatDemands[counter + 1] = -demand; // Delivery
+
+            counter += 2;
+        }
+
+        return seatDemands;
+    }
+
+    public long[] getWheelchairDemands() {
+        var wheelchairDemands = new long[tasksByIndex.size()];
+
+        /* Set demand for depots to 0 */
+        for (int i = 0; i < vehicles.size() * 2; i++) {
+            wheelchairDemands[i] = 0;
+        }
+
+        /* Pickup adds and delivery subtracts. */
+        int counter = vehicles.size() * 2;
+        for (RideRequest ride : rideRequests) {
+            int demand = 0;
+            if (ride.isWheelchairRequired())
+                demand = 1;
+
+            wheelchairDemands[counter] = demand; // Pickup
+            wheelchairDemands[counter + 1] = -demand; // Delivery
+
+            counter += 2;
+        }
+
+        return wheelchairDemands;
+    }
+
+    public long[] getSeatCapacities() {
+        var seatCapacities = new long[vehicles.size()];
+
+        for (int i = 0; i < vehicles.size(); i++) {
+            seatCapacities[i] = (long)vehicles.get(i).getSeatCapacity();
+        }
+
+        return seatCapacities;
+    }
+
+    public long[] getWheelchairCapacities() {
+        var wheelchairCapacities = new long[vehicles.size()];
+
+        for (int i = 0; i < vehicles.size(); i++) {
+            wheelchairCapacities[i] = (long)vehicles.get(i).getWheelchairCapacity();
+        }
+
+        return wheelchairCapacities;
+    }
 }

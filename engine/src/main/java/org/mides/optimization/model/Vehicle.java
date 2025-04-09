@@ -12,8 +12,11 @@ public class Vehicle {
     @JsonProperty("id")
     private String id;
 
-    @JsonProperty("capacity")
-    private double capacity;
+    @JsonProperty("seat_capacity")
+    private double seatCapacity;
+
+    @JsonProperty("wheelchair_capacity")
+    private double wheelchairCapacity;
 
     @NotNull
     @JsonProperty("depot_start")

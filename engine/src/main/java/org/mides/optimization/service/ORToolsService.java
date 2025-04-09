@@ -102,10 +102,42 @@ public class ORToolsService implements IORToolsService {
             );
         }
 
-        /* TO DO: Add capacity constraints */
+        /* Add seat capacity constraints */
+        var solver = routing.solver();
+        var seatDemands = problem.getSeatDemands();
+        final int seatDemandCallbackIndex = routing.registerUnaryTransitCallback((long fromIndex) -> {
+            int fromNode = manager.indexToNode(fromIndex);
+            return seatDemands[fromNode];
+        });
+
+        var seatCapacities = problem.getSeatCapacities();
+
+        routing.addDimensionWithVehicleCapacity(
+            seatDemandCallbackIndex,
+            0,
+            seatCapacities,
+            true,
+            "seat"
+        );
+
+        /* Add wheelchair capacity constraints */
+        var wheelchairDemands = problem.getWheelchairDemands();
+        final int wheelchairDemandCallbackIndex = routing.registerUnaryTransitCallback((long fromIndex) -> {
+            int fromNode = manager.indexToNode(fromIndex);
+            return wheelchairDemands[fromNode];
+        });
+
+        var wheelchairCapacities = problem.getWheelchairCapacities();
+
+        routing.addDimensionWithVehicleCapacity(
+            wheelchairDemandCallbackIndex,
+            0,
+            wheelchairCapacities,
+            true,
+            "wheelchair"
+        );
 
         /* Add pickup-delivery constraints */
-        var solver = routing.solver();
         for (var ride : problem.getRideRequests()) {
             var pickupIndex = manager.nodeToIndex(ride.getPickup().getIndex());
             var deliveryIndex = manager.nodeToIndex(ride.getDelivery().getIndex());

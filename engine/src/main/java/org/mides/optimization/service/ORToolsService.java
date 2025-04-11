@@ -12,7 +12,7 @@ public class ORToolsService implements IORToolsService {
 
     /* Max approx. distance between nodes * SpanCostCoefficient */
     private static final long DROP_PENALTY = 10000000 * 100;
-    private static final long MAX_RIDE_TIME = 3600;
+    private static final long MAX_RIDE_TIME = 5000;
 
     @Override
     public Solution solve(Problem problem, long[][] distanceMatrix, long[][] timeMatrix) {
@@ -201,7 +201,7 @@ public class ORToolsService implements IORToolsService {
             .toBuilder()
             .setFirstSolutionStrategy(FirstSolutionStrategy.Value.PATH_CHEAPEST_ARC)
             .setLocalSearchMetaheuristic(LocalSearchMetaheuristic.Value.GUIDED_LOCAL_SEARCH)
-            .setTimeLimit(com.google.protobuf.Duration.newBuilder().setSeconds(60).build())
+            .setTimeLimit(com.google.protobuf.Duration.newBuilder().setSeconds(2).build())
             .build();
 
         var assignment = routing.solveWithParameters(searchParams);

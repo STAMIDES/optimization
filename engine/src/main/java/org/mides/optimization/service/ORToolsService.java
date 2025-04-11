@@ -86,8 +86,8 @@ public class ORToolsService implements IORToolsService {
         for (var vehicle : problem.getVehicles()) {
             var index = routing.start(vehicleIndex);
             timeDimension.cumulVar(index).setRange(
-                vehicle.getDepotStart().getTimeWindow().startSeconds(),
-                vehicle.getDepotEnd().getTimeWindow().endSeconds()
+                vehicle.getTimeWindow().startSeconds(),
+                vehicle.getTimeWindow().endSeconds()
             );
             vehicleIndex++;
         }
@@ -165,8 +165,8 @@ public class ORToolsService implements IORToolsService {
         /* Add constraint for rides to be contained on vehicles depot start and end */
         vehicleIndex = 0;
         for (var vehicle : problem.getVehicles()) {
-            long vehicleStartTime = vehicle.getDepotStart().getTimeWindow().startSeconds();
-            long vehicleEndTime = vehicle.getDepotEnd().getTimeWindow().endSeconds();
+            long vehicleStartTime = vehicle.getTimeWindow().startSeconds();
+            long vehicleEndTime = vehicle.getTimeWindow().endSeconds();
 
             for (var ride : problem.getRideRequests()) {
                 // Pickup constraints
@@ -249,8 +249,8 @@ public class ORToolsService implements IORToolsService {
             var problemVehicle = problem.getVehicles().get(vehicle);
             route.setVehicleId(problemVehicle.getId());
             route.setTimeWindow(new TimeWindow(
-                Duration.ofSeconds(problemVehicle.getDepotStart().getTimeWindow().startSeconds()),
-                Duration.ofSeconds(problemVehicle.getDepotEnd().getTimeWindow().endSeconds()))
+                Duration.ofSeconds(problemVehicle.getTimeWindow().startSeconds()),
+                Duration.ofSeconds(problemVehicle.getTimeWindow().endSeconds()))
             );
             int nodeIndex;
             int position = 0;

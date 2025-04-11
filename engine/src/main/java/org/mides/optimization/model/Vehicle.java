@@ -18,6 +18,9 @@ public class Vehicle {
     @JsonProperty("wheelchair_capacity")
     private double wheelchairCapacity;
 
+    @JsonProperty("time_window")
+    private TimeWindow timeWindow = new TimeWindow();
+
     @NotNull
     @JsonProperty("depot_start")
     private Depot depotStart;

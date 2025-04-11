@@ -41,7 +41,7 @@ public class Problem {
             tasksByIndex.put(index, new PickupDeliveryTask(
                 index,
                 vehicle.getDepotStart().getAddress(),
-                vehicle.getDepotStart().getTimeWindow(),
+                vehicle.getTimeWindow(),
                 vehicle.getDepotStart().getCoordinates(),
                 vehicle.getDepotStart().getId()
             ));
@@ -51,7 +51,7 @@ public class Problem {
             tasksByIndex.put(index, new PickupDeliveryTask(
                 index,
                 vehicle.getDepotEnd().getAddress(),
-                vehicle.getDepotEnd().getTimeWindow(),
+                vehicle.getTimeWindow(),
                 vehicle.getDepotEnd().getCoordinates(),
                 vehicle.getDepotEnd().getId()
             ));

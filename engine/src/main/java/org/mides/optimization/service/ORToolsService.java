@@ -6,6 +6,7 @@ import org.mides.optimization.util.Utils;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
+import java.util.Objects;
 
 @Service
 public class ORToolsService implements IORToolsService {
@@ -34,8 +35,27 @@ public class ORToolsService implements IORToolsService {
         var routing = new RoutingModel(manager);
 
         /* Allow dropping nodes */
-        for (int i = problem.getVehicles().size() * 2; i < problem.getNumberOfNodes(); i++) {
-            routing.addDisjunction(new long[] { manager.nodeToIndex(i) }, DROP_PENALTY);
+        int taskIndex = problem.getVehicles().size() * 2;
+        while (taskIndex < problem.getNumberOfNodes()) {
+            var currentRideId = problem.getTasksByIndex().get(taskIndex).getRide().getId();
+            var nextRideId = problem.getTasksByIndex().get(taskIndex + 2).getRide().getId();
+
+            /* Solo ida o solo vuelta */
+            if (!Objects.equals(currentRideId, nextRideId)) {
+                routing.addDisjunction(new long[] {
+                    manager.nodeToIndex(taskIndex),
+                    manager.nodeToIndex(taskIndex + 1)
+                }, DROP_PENALTY, 2);
+                taskIndex += 2;
+            } else {
+                routing.addDisjunction(new long[] {
+                    manager.nodeToIndex(taskIndex),
+                    manager.nodeToIndex(taskIndex + 1),
+                    manager.nodeToIndex(taskIndex + 2),
+                    manager.nodeToIndex(taskIndex + 3)
+                }, DROP_PENALTY, 4);
+                taskIndex += 4;
+            }
         }
 
         /* Add distance dimension */

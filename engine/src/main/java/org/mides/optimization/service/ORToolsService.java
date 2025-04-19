@@ -206,6 +206,32 @@ public class ORToolsService implements IORToolsService {
             vehicleIndex++;
         }
 
+        /* Compatibility */
+        for (var ride : problem.getRideRequests()) {
+            var pickupNodeIndex = manager.nodeToIndex(ride.getPickup().getIndex());
+            var deliveryNodeIndex = manager.nodeToIndex(ride.getDelivery().getIndex());
+
+            for (int vehIndex = 0; vehIndex < problem.getVehicles().size(); vehIndex++) {
+                var vehicle = problem.getVehicles().get(vehIndex);
+
+                if (!problem.isRideCompatibleWithVehicle(ride, vehicle)) {
+                    // Create boolean variables that equals 1 if this vehicle is used
+                    IntVar isVehicleUsedPickup = solver.makeIsEqualCstVar(
+                        routing.vehicleVar(pickupNodeIndex),
+                        vehIndex
+                    );
+                    IntVar isVehicleUsedDelivery = solver.makeIsEqualCstVar(
+                        routing.vehicleVar(deliveryNodeIndex),
+                        vehIndex
+                    );
+
+                    // Force these variables to be 0 (meaning this vehicle cannot be used for this ride)
+                    solver.addConstraint(solver.makeEquality(isVehicleUsedPickup, 0));
+                    solver.addConstraint(solver.makeEquality(isVehicleUsedDelivery, 0));
+                }
+            }
+        }
+
         var searchParams = main.defaultRoutingSearchParameters()
             .toBuilder()
             .setFirstSolutionStrategy(FirstSolutionStrategy.Value.PATH_CHEAPEST_ARC)

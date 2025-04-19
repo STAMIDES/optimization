@@ -178,4 +178,8 @@ public class Problem {
 
         return wheelchairCapacities;
     }
+
+    public boolean isRideCompatibleWithVehicle(RideRequest ride, Vehicle vehicle) {
+        return vehicle.getSupportedCharacteristics().containsAll(ride.getCharacteristics());
+    }
 }

@@ -7,6 +7,9 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import lombok.Data;
 
+import java.util.HashSet;
+import java.util.Set;
+
 @Data
 @NoArgsConstructor
 public class RideRequest {
@@ -39,6 +42,10 @@ public class RideRequest {
     @JsonProperty("direction")
     @JsonDeserialize(using = RideDirectionDeserializer.class)
     private RideDirection direction;
+
+    @JsonProperty("characteristics")
+    @JsonDeserialize(as = HashSet.class)
+    private Set<String> characteristics = new HashSet<>();
 
     @Override
     public String toString() {

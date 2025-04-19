@@ -1,9 +1,13 @@
 package org.mides.optimization.model;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+
+import java.util.HashSet;
+import java.util.Set;
 
 @Data
 @NoArgsConstructor
@@ -28,4 +32,8 @@ public class Vehicle {
     @NotNull
     @JsonProperty("depot_end")
     private Depot depotEnd;
+
+    @JsonProperty("supported_characteristics")
+    @JsonDeserialize(as = HashSet.class)
+    private Set<String> supportedCharacteristics = new HashSet<>();
 }

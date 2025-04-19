@@ -8,10 +8,8 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+
 import static java.util.Comparator.comparing;
 
 @Data
@@ -85,6 +83,24 @@ public class Problem {
         }
 
         numberOfNodes = rideRequests.size() * 2 + vehicles.size() * 2;
+    }
+
+    public int getNumberOfStopsInRide(int taskIndex) {
+        if (taskIndex + 2 == getNumberOfNodes())
+            return 2;
+
+        int result = 2;
+        var currentRideId = tasksByIndex.get(taskIndex).getRide().getId();
+        var nextRideId = tasksByIndex.get(taskIndex + 2).getRide().getId();
+
+        while (Objects.equals(currentRideId, nextRideId) && taskIndex + result < getNumberOfNodes()) {
+            result += 2;
+            if (taskIndex + result == getNumberOfNodes())
+                break;
+            nextRideId = tasksByIndex.get(taskIndex + result).getRide().getId();
+        }
+
+        return result;
     }
 
     public List<Coordinate> getAllCoordinates() {

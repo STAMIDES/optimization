@@ -37,25 +37,16 @@ public class ORToolsService implements IORToolsService {
         /* Allow dropping nodes */
         int taskIndex = problem.getVehicles().size() * 2;
         while (taskIndex < problem.getNumberOfNodes()) {
-            var currentRideId = problem.getTasksByIndex().get(taskIndex).getRide().getId();
-            var nextRideId = problem.getTasksByIndex().get(taskIndex + 2).getRide().getId();
 
-            /* Solo ida o solo vuelta */
-            if (!Objects.equals(currentRideId, nextRideId)) {
-                routing.addDisjunction(new long[] {
-                    manager.nodeToIndex(taskIndex),
-                    manager.nodeToIndex(taskIndex + 1)
-                }, DROP_PENALTY, 2);
-                taskIndex += 2;
-            } else {
-                routing.addDisjunction(new long[] {
-                    manager.nodeToIndex(taskIndex),
-                    manager.nodeToIndex(taskIndex + 1),
-                    manager.nodeToIndex(taskIndex + 2),
-                    manager.nodeToIndex(taskIndex + 3)
-                }, DROP_PENALTY, 4);
-                taskIndex += 4;
+            var numberOfStops = problem.getNumberOfStopsInRide(taskIndex);
+
+            var indices = new long[numberOfStops];
+            for (int i = 0; i < numberOfStops; i++) {
+                indices[i] = manager.nodeToIndex(taskIndex + i);
             }
+
+            routing.addDisjunction(indices, DROP_PENALTY, numberOfStops);
+            taskIndex += numberOfStops;
         }
 
         /* Add distance dimension */
@@ -97,8 +88,6 @@ public class ORToolsService implements IORToolsService {
                 problem.getTasksByIndex().get(i).getTimeWindow().startSeconds(),
                 problem.getTasksByIndex().get(i).getTimeWindow().endSeconds()
             );
-            if (problem.getTasksByIndex().get(i).getRide().getPickup().getIndex() == i)
-                timeDimension.slackVar(index).setValue(0); /* No waiting time after pickup */
             routing.addToAssignment(timeDimension.slackVar(index));
         }
 

@@ -1,8 +1,8 @@
-FROM ghcr.io/project-osrm/osrm-backend
+FROM ghcr.io/project-osrm/osrm-backend:latest
 
 COPY prepare_osrm_data.sh ./prepare_osrm_data.sh
 
-RUN apt-get -y update && apt-get install -y curl
+RUN apk update && apk add --no-cache curl bash
 
 RUN chmod +x ./prepare_osrm_data.sh && ./prepare_osrm_data.sh
 

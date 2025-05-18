@@ -3,17 +3,29 @@ package org.mides.optimization.service;
 import com.google.ortools.constraintsolver.*;
 import org.mides.optimization.model.*;
 import org.mides.optimization.util.Utils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 
 @Service
 public class ORToolsService implements IORToolsService {
 
+    private static final Logger logger = LoggerFactory.getLogger(ORToolsService.class);
+
     /* Max approx. distance between nodes * SpanCostCoefficient */
     private static final long DROP_PENALTY = 10000000 * 100;
-    private static final long MAX_RIDE_TIME = 5000;
+    private static final long MAX_RIDE_TIME = 5000; // seconds, approx 1h23m
+
+    // Constants for vehicle rests
+    private static final long REST_TIME_SECONDS = 30 * 60; // 30 minutes
+    private static final long REST_TIME_MIN_START_AFTER_RIDE_START_SECONDS = 1 * 60 * 60; // 1 hour
+    private static final long REST_TIME_MAX_START_BEFORE_RIDE_END_SECONDS = 1 * 60 * 60; // 1 hour
+
 
     @Override
     public Solution solve(Problem problem, long[][] distanceMatrix, long[][] timeMatrix) {
@@ -33,6 +45,7 @@ public class ORToolsService implements IORToolsService {
             ends
         );
         var routing = new RoutingModel(manager);
+        Solver solver = routing.solver();
 
         /* Allow dropping nodes */
         int taskIndex = problem.getVehicles().size() * 2;
@@ -112,7 +125,6 @@ public class ORToolsService implements IORToolsService {
         }
 
         /* Add seat capacity constraints */
-        var solver = routing.solver();
         var seatDemands = problem.getSeatDemands();
         final int seatDemandCallbackIndex = routing.registerUnaryTransitCallback((long fromIndex) -> {
             int fromNode = manager.indexToNode(fromIndex);
@@ -165,7 +177,7 @@ public class ORToolsService implements IORToolsService {
         for (var ride : problem.getRideRequests()) {
             var pickupIndex = manager.nodeToIndex(ride.getPickup().getIndex());
             var deliveryIndex = manager.nodeToIndex(ride.getDelivery().getIndex());
-            solver.addConstraint(solver.makeLessOrEqual(
+             solver.addConstraint(solver.makeLessOrEqual(
                 timeDimension.cumulVar(deliveryIndex),
                 solver.makeSum(timeDimension.cumulVar(pickupIndex), MAX_RIDE_TIME)
             ));
@@ -227,7 +239,59 @@ public class ORToolsService implements IORToolsService {
 
                     // Force these variables to be 0 (meaning this vehicle cannot be used for this ride)
                     solver.addConstraint(solver.makeEquality(isVehicleUsedPickup, 0));
-                    solver.addConstraint(solver.makeEquality(isVehicleUsedDelivery, 0));
+                }
+            }
+        }
+
+        // Add break constraints for vehicles with with_rest = true
+        for (int i = 0; i < problem.getVehicles().size(); i++) {
+            Vehicle vehicle = problem.getVehicles().get(i);
+            if (vehicle.isWithRest()) {
+                long vehicleStartTwSeconds = vehicle.getTimeWindow().startSeconds();
+                long vehicleEndTwSeconds = vehicle.getTimeWindow().endSeconds();
+
+                long earliestBreakStart = vehicleStartTwSeconds + REST_TIME_MIN_START_AFTER_RIDE_START_SECONDS;
+                long latestBreakStartByRule = vehicleEndTwSeconds - REST_TIME_MAX_START_BEFORE_RIDE_END_SECONDS;
+                long latestBreakStartByVehicleEnd = vehicleEndTwSeconds - REST_TIME_SECONDS;
+
+                long actualMinBreakStart = earliestBreakStart;
+                long actualMaxBreakStart = Math.min(latestBreakStartByRule, latestBreakStartByVehicleEnd);
+
+                if (actualMinBreakStart <= actualMaxBreakStart) {
+                    String breakName = "Rest_V" + vehicle.getId();
+                    IntervalVar breakInterval = solver.makeFixedDurationIntervalVar(
+                            actualMinBreakStart,
+                            actualMaxBreakStart,
+                            REST_TIME_SECONDS,
+                            false, // Break is not optional
+                            breakName
+                    );
+
+                    List<IntervalVar> vehicleBreaksList = new ArrayList<>();
+                    vehicleBreaksList.add(breakInterval);
+                    
+                    List<Long> breakDurationsList = new ArrayList<>();
+                    breakDurationsList.add(REST_TIME_SECONDS);
+
+                    // Convert lists to arrays
+                    IntervalVar[] vehicleBreaksArray = vehicleBreaksList.toArray(new IntervalVar[0]);
+                    long[] breakDurationsArray = breakDurationsList.stream().mapToLong(l -> l).toArray();
+
+
+                    logger.info("Setting break for vehicle {}: Start window [{}, {}], Duration {}",
+                        vehicle.getId(), 
+                        Duration.ofSeconds(actualMinBreakStart), 
+                        Duration.ofSeconds(actualMaxBreakStart), 
+                        Duration.ofSeconds(REST_TIME_SECONDS));
+                    
+                    // Use the arrays in the method call
+                    timeDimension.setBreakIntervalsOfVehicle(vehicleBreaksArray, i, breakDurationsArray);
+
+                } else {
+                    logger.warn("Cannot schedule mandatory rest for vehicle {} (ID: {}). Calculated break start window is invalid: minStart={}, maxStart={}. Vehicle TW: [{}, {}]",
+                            i, vehicle.getId(),
+                            Duration.ofSeconds(actualMinBreakStart), Duration.ofSeconds(actualMaxBreakStart),
+                            vehicle.getTimeWindow().getStart(), vehicle.getTimeWindow().getEnd());
                 }
             }
         }
@@ -236,7 +300,8 @@ public class ORToolsService implements IORToolsService {
             .toBuilder()
             .setFirstSolutionStrategy(FirstSolutionStrategy.Value.PATH_CHEAPEST_ARC)
             .setLocalSearchMetaheuristic(LocalSearchMetaheuristic.Value.GUIDED_LOCAL_SEARCH)
-            .setTimeLimit(com.google.protobuf.Duration.newBuilder().setSeconds(2).build())
+            .setTimeLimit(com.google.protobuf.Duration.newBuilder().setSeconds(5).build()) // Increased time limit slightly
+            .setLogSearch(true) // Enable logging for debugging
             .build();
 
         var assignment = routing.solveWithParameters(searchParams);
@@ -272,8 +337,8 @@ public class ORToolsService implements IORToolsService {
 
             if (rideId != null && !solution.getDroppedRides().contains(rideId)) {
                 solution.getDroppedRides().add(rideId);
+                }
             }
-        }
 
         /* Routes */
         var timeDimension = routing.getMutableDimension("time");

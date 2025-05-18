@@ -262,38 +262,52 @@ public class ORToolsService implements IORToolsService {
                 long vehicleStartTwSeconds = vehicle.getTimeWindow().startSeconds();
                 long vehicleEndTwSeconds = vehicle.getTimeWindow().endSeconds();
 
-                long earliestBreakStart = vehicleStartTwSeconds + REST_TIME_MIN_START_AFTER_RIDE_START_SECONDS;
-                long latestBreakStartByRule = vehicleEndTwSeconds - REST_TIME_MAX_START_BEFORE_RIDE_END_SECONDS;
-                long latestBreakStartByVehicleEnd = vehicleEndTwSeconds - REST_TIME_SECONDS;
+                // Define the IntervalVar for the break with the widest possible valid window
+                // based on the vehicle's absolute Time Window.
+                // The break must be able to complete within the vehicle's time window.
+                long domainMinBreakStart = vehicleStartTwSeconds;
+                long domainMaxBreakStart = vehicleEndTwSeconds - REST_TIME_SECONDS;
 
-                long actualMinBreakStart = earliestBreakStart;
-                long actualMaxBreakStart = Math.min(latestBreakStartByRule, latestBreakStartByVehicleEnd);
-
-                if (actualMinBreakStart <= actualMaxBreakStart) {
+                if (domainMinBreakStart <= domainMaxBreakStart) { // Check if vehicle TW is long enough for a break
                     String breakName = "Rest_V" + vehicle.getId() + "_idx" + i;
                     IntervalVar breakInterval = solver.makeFixedDurationIntervalVar(
-                            actualMinBreakStart,
-                            actualMaxBreakStart,
+                            domainMinBreakStart,
+                            domainMaxBreakStart,
                             REST_TIME_SECONDS,
                             false, // Break is not optional
                             breakName
                     );
                     vehicleBreakIntervals.put(i, breakInterval); // Store for later retrieval
 
+                    // Add dynamic constraints to tie the break to actual vehicle operation times
+                    IntVar actualDepotStartTime = timeDimension.cumulVar(routing.start(i));
+                    IntVar actualDepotEndTime = timeDimension.cumulVar(routing.end(i));
+
+                    // Constraint 1: Break must start at least REST_TIME_MIN_START_AFTER_RIDE_START_SECONDS
+                    // after the vehicle actually leaves the depot.
+                    solver.addConstraint(solver.makeGreaterOrEqual(
+                        breakInterval.startExpr(),
+                        solver.makeSum(actualDepotStartTime, REST_TIME_MIN_START_AFTER_RIDE_START_SECONDS)
+                    ));
+
+                    // Constraint 2: Break must be completed at least REST_TIME_MAX_START_BEFORE_RIDE_END_SECONDS
+                    // before the vehicle actually arrives at the end depot.
+                    // breakInterval.endExpr() <= actualDepotEndTime - REST_TIME_MAX_START_BEFORE_RIDE_END_SECONDS
+                    solver.addConstraint(solver.makeLessOrEqual(
+                        breakInterval.endExpr(),
+                        solver.makeSum(actualDepotEndTime, -REST_TIME_MAX_START_BEFORE_RIDE_END_SECONDS) // actualDepotEndTime - offset
+                    ));
+
                     List<IntervalVar> vehicleBreaksList = new ArrayList<>();
                     vehicleBreaksList.add(breakInterval);
-                    
                     IntervalVar[] vehicleBreaksArray = vehicleBreaksList.toArray(new IntervalVar[0]);
-                    // The breakDurationsArray is no longer needed for the new API call.
-                    // The duration is part of the IntervalVar definition.
 
-                    logger.info("Setting break for vehicle {} (idx {}): Start window [{}, {}], Duration {}",
+                    logger.info("Setting break for vehicle ID: {} (model idx: {}): TW-based start range [{}, {}], Duration {}. Dynamic constraints linked to actual route times apply.",
                         vehicle.getId(), i,
-                        Duration.ofSeconds(actualMinBreakStart), 
-                        Duration.ofSeconds(actualMaxBreakStart), 
+                        Duration.ofSeconds(domainMinBreakStart),
+                        Duration.ofSeconds(domainMaxBreakStart),
                         Duration.ofSeconds(REST_TIME_SECONDS));
                     
-                    // Use the non-deprecated version with pre/post travel evaluators
                     timeDimension.setBreakIntervalsOfVehicle(
                         vehicleBreaksArray, 
                         i, // vehicle index
@@ -301,10 +315,13 @@ public class ORToolsService implements IORToolsService {
                         zeroTransitCallbackIndex  // post_travel_evaluator index
                     );
                 } else {
-                    logger.warn("Cannot schedule mandatory rest for vehicle {} (idx {}, ID: {}). Calculated break start window is invalid: minStart={}, maxStart={}. Vehicle TW: [{}, {}]",
-                            i, vehicle.getId(), // Corrected: vehicle.getId() was missing
-                            Duration.ofSeconds(actualMinBreakStart), Duration.ofSeconds(actualMaxBreakStart),
-                            vehicle.getTimeWindow().getStart(), vehicle.getTimeWindow().getEnd());
+                    // This warning means the vehicle's own TimeWindow is too short for the break duration.
+                    logger.warn("Cannot schedule mandatory rest for vehicle ID: {} (model idx: {}). Vehicle TimeWindow [{}, {}] (duration {}s) is too short for rest duration ({}s). Break needs to start by {} at the latest within TW to fit.",
+                            vehicle.getId(), i,
+                            vehicle.getTimeWindow().getStart(), vehicle.getTimeWindow().getEnd(),
+                            (vehicleEndTwSeconds - vehicleStartTwSeconds),
+                            REST_TIME_SECONDS,
+                            Duration.ofSeconds(domainMaxBreakStart));
                 }
             }
         }
@@ -328,17 +345,15 @@ public class ORToolsService implements IORToolsService {
         RoutingIndexManager manager,
         Assignment assignment,
         long[][] timeMatrix,
-        Map<Integer, IntervalVar> vehicleBreakIntervals 
+        Map<Integer, IntervalVar> vehicleBreakIntervals
     ) {
         if (assignment == null) {
             logger.error("No solution found. Problem might be infeasible.");
-            // Return an empty solution or throw, depending on desired behavior for infeasibility
             Solution emptySolution = new Solution();
             emptySolution.setDroppedRides(
                 problem.getRideRequests().stream().map(RideRequest::getId).toList()
-            ); // Mark all rides as dropped
+            );
             return emptySolution;
-            // Or: throw new IllegalArgumentException("Unfeasible problem or solver failed to find a solution.");
         }
 
         Solution solution = new Solution();
@@ -349,15 +364,10 @@ public class ORToolsService implements IORToolsService {
                 continue;
             }
             if (assignment.value(routing.nextVar(node)) != node) {
-                continue; 
+                continue;
             }
-             // If routing.NextVar(node) == node, it means it's not served or it's the end of a path of unperformed.
-            // This check is for nodes that are part of disjunctions and are dropped.
             int droppedNodeOriginalIndex = manager.indexToNode(node);
             var task = problem.getTasksByIndex().get(droppedNodeOriginalIndex);
-            // Ensure this node is actually a task node, not a depot.
-            // Depots are handled by isStart/isEnd.
-            // The disjunction is added starting from taskIndex (problem.getVehicles().size() * 2)
             if (droppedNodeOriginalIndex >= problem.getVehicles().size() * 2) {
                  var ride = task.getRide();
                  var rideId = ride != null ? ride.getId() : null;
@@ -385,9 +395,8 @@ public class ORToolsService implements IORToolsService {
             int position = 0;
             long currentSolverIndex = routing.start(vehicle);
 
-            // Check if the route is empty (starts and immediately ends)
             if (assignment.value(routing.nextVar(currentSolverIndex)) == routing.end(vehicle)) {
-                continue; 
+                continue;
             }
             
             while (!routing.isEnd(currentSolverIndex)) {
@@ -405,7 +414,6 @@ public class ORToolsService implements IORToolsService {
                 visit.setAddress(taskNode.getAddress());
                 visit.setCoordinates(taskNode.getCoordinates());
                 visit.setArrivalTime(Duration.ofSeconds(assignment.min(timeDimension.cumulVar(currentSolverIndex))));
-                // travelTimeToNextVisit should be based on the actual next node in the route
                 visit.setTravelTimeToNextVisit(Duration.ofSeconds(timeMatrix[nodeIndexInProblem][nextNodeIndexInProblem]));
                 visit.setSolutionWindow(new TimeWindow(
                     Duration.ofSeconds(assignment.min(timeDimension.cumulVar(currentSolverIndex))),
@@ -418,10 +426,9 @@ public class ORToolsService implements IORToolsService {
                 currentSolverIndex = nextSolverIndexValue;
             }
 
-            // Add the last visit (vehicle's end depot)
-            nodeIndexInProblem = manager.indexToNode(currentSolverIndex); // currentSolverIndex is now routing.end(vehicle)
+            nodeIndexInProblem = manager.indexToNode(currentSolverIndex); 
             var endDepotTaskNode = problem.getTasksByIndex().get(nodeIndexInProblem);
-            var endDepotRide = endDepotTaskNode.getRide(); // Should be null for depot
+            var endDepotRide = endDepotTaskNode.getRide(); 
 
             Visit lastVisit = new Visit();
             lastVisit.setPosition(position);
@@ -431,7 +438,7 @@ public class ORToolsService implements IORToolsService {
             lastVisit.setAddress(endDepotTaskNode.getAddress());
             lastVisit.setCoordinates(endDepotTaskNode.getCoordinates());
             lastVisit.setArrivalTime(Duration.ofSeconds(assignment.min(timeDimension.cumulVar(currentSolverIndex))));
-            lastVisit.setTravelTimeToNextVisit(Duration.ZERO); // No next visit from the end depot
+            lastVisit.setTravelTimeToNextVisit(Duration.ZERO); 
             lastVisit.setSolutionWindow(new TimeWindow(
                 Duration.ofSeconds(assignment.min(timeDimension.cumulVar(currentSolverIndex))),
                 Duration.ofSeconds(assignment.max(timeDimension.cumulVar(currentSolverIndex)))
@@ -441,24 +448,22 @@ public class ORToolsService implements IORToolsService {
 
             route.getVisits().add(lastVisit);
 
-            // Populate rest time window if applicable
             if (problemVehicle.isWithRest() && vehicleBreakIntervals.containsKey(vehicle)) {
                 IntervalVar breakVar = vehicleBreakIntervals.get(vehicle);
-                // Check if break was actually performed (though it's mandatory, good to check)
-                if (breakVar != null && assignment.performedValue(breakVar) == 1) { 
+                if (breakVar != null && assignment.performedValue(breakVar) == 1) {
                     long breakStart = assignment.startValue(breakVar);
-                    long breakEnd = assignment.endValue(breakVar); 
-                    if (breakStart >=0 && breakEnd >=0 && breakStart < breakEnd) { 
+                    long breakEnd = assignment.endValue(breakVar);
+                    if (breakStart >=0 && breakEnd >=0 && breakStart < breakEnd) {
                         route.setRestTimeWindow(new TimeWindow(Duration.ofSeconds(breakStart), Duration.ofSeconds(breakEnd)));
-                         logger.info("Vehicle {} (idx {}) assigned rest: Start: {}, End: {}",
+                         logger.info("Vehicle ID: {} (model idx: {}) assigned rest: Start: {}, End: {}",
                             problemVehicle.getId(), vehicle,
                             Duration.ofSeconds(breakStart), Duration.ofSeconds(breakEnd));
                     } else {
-                        logger.warn("Vehicle {} (idx {}) had a mandatory rest defined, but couldn't retrieve valid start/end times from assignment. Start: {}, End: {}. Break Performed: {}",
+                        logger.warn("Vehicle ID: {} (model idx: {}) had a mandatory rest defined, but couldn't retrieve valid start/end times from assignment. Start: {}, End: {}. Break Performed: {}",
                                 problemVehicle.getId(), vehicle, breakStart, breakEnd, assignment.performedValue(breakVar));
                     }
                 } else if (breakVar != null) {
-                     logger.warn("Vehicle {} (idx {}) had a mandatory rest defined, but it was not performed in the solution. Break Performed: {}",
+                     logger.warn("Vehicle ID: {} (model idx: {}) had a mandatory rest defined, but it was not performed in the solution. Break Performed: {}",
                                 problemVehicle.getId(), vehicle, assignment.performedValue(breakVar));
                 }
             }
@@ -467,7 +472,7 @@ public class ORToolsService implements IORToolsService {
                 var endTime = route.getVisits().get(route.getVisits().size() - 1).getArrivalTime();
                 var startTime = route.getVisits().get(0).getArrivalTime();
                 route.setDuration(endTime.minus(startTime));
-                route.setDistance(Utils.convertDistanceBack(assignment.value(distanceDimension.cumulVar(currentSolverIndex)))); // Distance at end node
+                route.setDistance(Utils.convertDistanceBack(assignment.value(distanceDimension.cumulVar(currentSolverIndex))));
                 solution.getRoutes().add(route);
             }
         }

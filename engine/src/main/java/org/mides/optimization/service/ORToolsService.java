@@ -244,6 +244,7 @@ public class ORToolsService implements IORToolsService {
 
                     // Force these variables to be 0 (meaning this vehicle cannot be used for this ride)
                     solver.addConstraint(solver.makeEquality(isVehicleUsedPickup, 0));
+                    solver.addConstraint(solver.makeEquality(isVehicleUsedDelivery, 0));
                 }
             }
         }

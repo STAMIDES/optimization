@@ -298,6 +298,33 @@ public class ORToolsService implements IORToolsService {
                         solver.makeSum(actualDepotEndTime, -REST_TIME_MAX_START_BEFORE_RIDE_END_SECONDS) // actualDepotEndTime - offset
                     ));
 
+                    // Add constraint: break cannot happen during a ride on this vehicle
+                    for (RideRequest ride : problem.getRideRequests()) {
+                        var pickupNodeForRide = ride.getPickup().getIndex();
+                        var deliveryNodeForRide = ride.getDelivery().getIndex();
+
+                        IntVar pickupTime = timeDimension.cumulVar(manager.nodeToIndex(pickupNodeForRide));
+                        IntVar deliveryTime = timeDimension.cumulVar(manager.nodeToIndex(deliveryNodeForRide));
+
+                        // isRideOnThisVehicle = (vehicleVar(pickup of ride) == current vehicle index i)
+                        IntVar isRideOnThisVehicle = solver.makeIsEqualCstVar(routing.vehicleVar(manager.nodeToIndex(pickupNodeForRide)), i);
+
+                        // breakEndsBeforePickup = (breakInterval.endExpr() <= pickupTime)
+                        IntVar breakEndsBeforePickup = solver.makeIsLessOrEqualVar(breakInterval.endExpr(), pickupTime);
+                        // breakStartsAfterDelivery = (breakInterval.startExpr() >= deliveryTime)
+                        IntVar breakStartsAfterDelivery = solver.makeIsGreaterOrEqualVar(breakInterval.startExpr(), deliveryTime);
+
+                        // disjunctionIsMet = (breakEndsBeforePickup OR breakStartsAfterDelivery)
+                        // This is true if (sum of boolean vars for conditions) >= 1
+                        IntVar disjunctionIsMet = solver.makeIsGreaterOrEqualCstVar(
+                            solver.makeSum(breakEndsBeforePickup, breakStartsAfterDelivery), 1L
+                        );
+                        
+                        // Implication: if isRideOnThisVehicle is true, then disjunctionIsMet must be true.
+                        // This can be expressed as: isRideOnThisVehicle <= disjunctionIsMet
+                        solver.addConstraint(solver.makeLessOrEqual(isRideOnThisVehicle, disjunctionIsMet));
+                    }
+
                     List<IntervalVar> vehicleBreaksList = new ArrayList<>();
                     vehicleBreaksList.add(breakInterval);
                     IntervalVar[] vehicleBreaksArray = vehicleBreaksList.toArray(new IntervalVar[0]);

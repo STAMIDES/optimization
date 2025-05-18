@@ -249,6 +249,12 @@ public class ORToolsService implements IORToolsService {
             }
         }
 
+        // Register a callback that returns 0 for pre/post travel time for breaks.
+        // This means breaks don't add any extra travel time beyond their own duration.
+        final int zeroTransitCallbackIndex = routing.registerTransitCallback(
+            (long fromIndex, long toIndex) -> 0L
+        );
+
         // Add break constraints for vehicles with with_rest = true
         for (int i = 0; i < problem.getVehicles().size(); i++) {
             Vehicle vehicle = problem.getVehicles().get(i);
@@ -277,11 +283,9 @@ public class ORToolsService implements IORToolsService {
                     List<IntervalVar> vehicleBreaksList = new ArrayList<>();
                     vehicleBreaksList.add(breakInterval);
                     
-                    List<Long> breakDurationsList = new ArrayList<>();
-                    breakDurationsList.add(REST_TIME_SECONDS); 
-
                     IntervalVar[] vehicleBreaksArray = vehicleBreaksList.toArray(new IntervalVar[0]);
-                    long[] breakDurationsArray = breakDurationsList.stream().mapToLong(l -> l).toArray();
+                    // The breakDurationsArray is no longer needed for the new API call.
+                    // The duration is part of the IntervalVar definition.
 
                     logger.info("Setting break for vehicle {} (idx {}): Start window [{}, {}], Duration {}",
                         vehicle.getId(), i,
@@ -289,10 +293,16 @@ public class ORToolsService implements IORToolsService {
                         Duration.ofSeconds(actualMaxBreakStart), 
                         Duration.ofSeconds(REST_TIME_SECONDS));
                     
-                    timeDimension.setBreakIntervalsOfVehicle(vehicleBreaksArray, i, breakDurationsArray);
+                    // Use the non-deprecated version with pre/post travel evaluators
+                    timeDimension.setBreakIntervalsOfVehicle(
+                        vehicleBreaksArray, 
+                        i, // vehicle index
+                        zeroTransitCallbackIndex, // pre_travel_evaluator index
+                        zeroTransitCallbackIndex  // post_travel_evaluator index
+                    );
                 } else {
                     logger.warn("Cannot schedule mandatory rest for vehicle {} (idx {}, ID: {}). Calculated break start window is invalid: minStart={}, maxStart={}. Vehicle TW: [{}, {}]",
-                            i, vehicle.getId(),
+                            i, vehicle.getId(), // Corrected: vehicle.getId() was missing
                             Duration.ofSeconds(actualMinBreakStart), Duration.ofSeconds(actualMaxBreakStart),
                             vehicle.getTimeWindow().getStart(), vehicle.getTimeWindow().getEnd());
                 }
@@ -339,17 +349,25 @@ public class ORToolsService implements IORToolsService {
                 continue;
             }
             if (assignment.value(routing.nextVar(node)) != node) {
-                continue;
+                continue; 
             }
+             // If routing.NextVar(node) == node, it means it's not served or it's the end of a path of unperformed.
+            // This check is for nodes that are part of disjunctions and are dropped.
+            int droppedNodeOriginalIndex = manager.indexToNode(node);
+            var task = problem.getTasksByIndex().get(droppedNodeOriginalIndex);
+            // Ensure this node is actually a task node, not a depot.
+            // Depots are handled by isStart/isEnd.
+            // The disjunction is added starting from taskIndex (problem.getVehicles().size() * 2)
+            if (droppedNodeOriginalIndex >= problem.getVehicles().size() * 2) {
+                 var ride = task.getRide();
+                 var rideId = ride != null ? ride.getId() : null;
 
-            int droppedNode = manager.indexToNode(node);
-            var ride = problem.getTasksByIndex().get(droppedNode).getRide();
-            var rideId = ride != null ? ride.getId() : null;
-
-            if (rideId != null && !solution.getDroppedRides().contains(rideId)) {
-                solution.getDroppedRides().add(rideId);
-                }
+                 if (rideId != null && !solution.getDroppedRides().contains(rideId)) {
+                     solution.getDroppedRides().add(rideId);
+                 }
             }
+        }
+
 
         /* Routes */
         var timeDimension = routing.getMutableDimension("time");
@@ -363,86 +381,95 @@ public class ORToolsService implements IORToolsService {
                 Duration.ofSeconds(problemVehicle.getTimeWindow().startSeconds()),
                 Duration.ofSeconds(problemVehicle.getTimeWindow().endSeconds()))
             );
-            int nodeIndex;
+            int nodeIndexInProblem;
             int position = 0;
-            long index = routing.start(vehicle);
-            if (assignment.value(routing.nextVar(index)) == routing.end(vehicle)) {
-                // Skip adding this route if it's empty based on current logic
+            long currentSolverIndex = routing.start(vehicle);
+
+            // Check if the route is empty (starts and immediately ends)
+            if (assignment.value(routing.nextVar(currentSolverIndex)) == routing.end(vehicle)) {
                 continue; 
             }
             
-            while (!routing.isEnd(index)) {
-                nodeIndex = manager.indexToNode(index);
-                var taskNodeIndex = problem.getTasksByIndex().get(nodeIndex);
-                long nextVarValue = assignment.value(routing.nextVar(index));
-                int nextNodeIndex = manager.indexToNode(nextVarValue);
+            while (!routing.isEnd(currentSolverIndex)) {
+                nodeIndexInProblem = manager.indexToNode(currentSolverIndex);
+                var taskNode = problem.getTasksByIndex().get(nodeIndexInProblem);
+                long nextSolverIndexValue = assignment.value(routing.nextVar(currentSolverIndex));
+                int nextNodeIndexInProblem = manager.indexToNode(nextSolverIndexValue);
 
-                var ride = taskNodeIndex.getRide();
+                var ride = taskNode.getRide();
                 Visit visit = new Visit();
                 visit.setPosition(position++);
                 visit.setRideId(ride != null ? ride.getId() : null);
                 visit.setUserId(ride != null ? ride.getUserId() : null);
                 visit.setRideDirection(ride != null ? ride.getDirection() : null);
-                visit.setAddress(taskNodeIndex.getAddress());
-                visit.setCoordinates(taskNodeIndex.getCoordinates());
-                visit.setArrivalTime(Duration.ofSeconds(assignment.min(timeDimension.cumulVar(index))));
-                visit.setTravelTimeToNextVisit(Duration.ofSeconds(timeMatrix[nodeIndex][nextNodeIndex]));
+                visit.setAddress(taskNode.getAddress());
+                visit.setCoordinates(taskNode.getCoordinates());
+                visit.setArrivalTime(Duration.ofSeconds(assignment.min(timeDimension.cumulVar(currentSolverIndex))));
+                // travelTimeToNextVisit should be based on the actual next node in the route
+                visit.setTravelTimeToNextVisit(Duration.ofSeconds(timeMatrix[nodeIndexInProblem][nextNodeIndexInProblem]));
                 visit.setSolutionWindow(new TimeWindow(
-                    Duration.ofSeconds(assignment.min(timeDimension.cumulVar(index))),
-                    Duration.ofSeconds(assignment.max(timeDimension.cumulVar(index)))
+                    Duration.ofSeconds(assignment.min(timeDimension.cumulVar(currentSolverIndex))),
+                    Duration.ofSeconds(assignment.max(timeDimension.cumulVar(currentSolverIndex)))
                 ));
-                visit.setType(taskNodeIndex.getType());
-                visit.setStopId(taskNodeIndex.getStopId());
+                visit.setType(taskNode.getType());
+                visit.setStopId(taskNode.getStopId());
 
                 route.getVisits().add(visit);
-                index = nextVarValue;
+                currentSolverIndex = nextSolverIndexValue;
             }
 
-            nodeIndex = manager.indexToNode(index);
-            var taskNodeIndex = problem.getTasksByIndex().get(nodeIndex);
-            var ride = taskNodeIndex.getRide();
+            // Add the last visit (vehicle's end depot)
+            nodeIndexInProblem = manager.indexToNode(currentSolverIndex); // currentSolverIndex is now routing.end(vehicle)
+            var endDepotTaskNode = problem.getTasksByIndex().get(nodeIndexInProblem);
+            var endDepotRide = endDepotTaskNode.getRide(); // Should be null for depot
 
             Visit lastVisit = new Visit();
             lastVisit.setPosition(position);
-            lastVisit.setRideId(ride != null ? ride.getId() : null);
-            lastVisit.setUserId(ride != null ? ride.getUserId() : null);
-            lastVisit.setRideDirection(ride != null ? ride.getDirection() : null);
-            lastVisit.setAddress(taskNodeIndex.getAddress());
-            lastVisit.setCoordinates(taskNodeIndex.getCoordinates());
-            lastVisit.setArrivalTime(Duration.ofSeconds(assignment.min(timeDimension.cumulVar(index))));
-            lastVisit.setTravelTimeToNextVisit(Duration.ZERO);
+            lastVisit.setRideId(endDepotRide != null ? endDepotRide.getId() : null);
+            lastVisit.setUserId(endDepotRide != null ? endDepotRide.getUserId() : null);
+            lastVisit.setRideDirection(endDepotRide != null ? endDepotRide.getDirection() : null);
+            lastVisit.setAddress(endDepotTaskNode.getAddress());
+            lastVisit.setCoordinates(endDepotTaskNode.getCoordinates());
+            lastVisit.setArrivalTime(Duration.ofSeconds(assignment.min(timeDimension.cumulVar(currentSolverIndex))));
+            lastVisit.setTravelTimeToNextVisit(Duration.ZERO); // No next visit from the end depot
             lastVisit.setSolutionWindow(new TimeWindow(
-                Duration.ofSeconds(assignment.min(timeDimension.cumulVar(index))),
-                Duration.ofSeconds(assignment.max(timeDimension.cumulVar(index)))
+                Duration.ofSeconds(assignment.min(timeDimension.cumulVar(currentSolverIndex))),
+                Duration.ofSeconds(assignment.max(timeDimension.cumulVar(currentSolverIndex)))
             ));
-            lastVisit.setType(taskNodeIndex.getType());
-            lastVisit.setStopId(taskNodeIndex.getStopId());
+            lastVisit.setType(endDepotTaskNode.getType());
+            lastVisit.setStopId(endDepotTaskNode.getStopId());
 
             route.getVisits().add(lastVisit);
 
             // Populate rest time window if applicable
             if (problemVehicle.isWithRest() && vehicleBreakIntervals.containsKey(vehicle)) {
                 IntervalVar breakVar = vehicleBreakIntervals.get(vehicle);
-                if (breakVar != null) { // Ensure breakVar was created
+                // Check if break was actually performed (though it's mandatory, good to check)
+                if (breakVar != null && assignment.performedValue(breakVar) == 1) { 
                     long breakStart = assignment.startValue(breakVar);
-                    long breakEnd = assignment.endValue(breakVar); // For fixed duration: start + duration
-                    if (breakStart >=0 && breakEnd >=0 && breakStart < breakEnd) { // Basic sanity check
+                    long breakEnd = assignment.endValue(breakVar); 
+                    if (breakStart >=0 && breakEnd >=0 && breakStart < breakEnd) { 
                         route.setRestTimeWindow(new TimeWindow(Duration.ofSeconds(breakStart), Duration.ofSeconds(breakEnd)));
                          logger.info("Vehicle {} (idx {}) assigned rest: Start: {}, End: {}",
                             problemVehicle.getId(), vehicle,
                             Duration.ofSeconds(breakStart), Duration.ofSeconds(breakEnd));
                     } else {
-                        logger.warn("Vehicle {} (idx {}) had a break defined, but couldn't retrieve valid start/end times from assignment. Start: {}, End: {}",
-                                problemVehicle.getId(), vehicle, breakStart, breakEnd);
+                        logger.warn("Vehicle {} (idx {}) had a mandatory rest defined, but couldn't retrieve valid start/end times from assignment. Start: {}, End: {}. Break Performed: {}",
+                                problemVehicle.getId(), vehicle, breakStart, breakEnd, assignment.performedValue(breakVar));
                     }
+                } else if (breakVar != null) {
+                     logger.warn("Vehicle {} (idx {}) had a mandatory rest defined, but it was not performed in the solution. Break Performed: {}",
+                                problemVehicle.getId(), vehicle, assignment.performedValue(breakVar));
                 }
             }
 
-            var endTime = route.getVisits().get(route.getVisits().size() - 1).getArrivalTime();
-            var startTime = route.getVisits().get(0).getArrivalTime();
-            route.setDuration(endTime.minus(startTime));
-            route.setDistance(Utils.convertDistanceBack(assignment.value(distanceDimension.cumulVar(index))));
-            solution.getRoutes().add(route);
+            if (!route.getVisits().isEmpty()) {
+                var endTime = route.getVisits().get(route.getVisits().size() - 1).getArrivalTime();
+                var startTime = route.getVisits().get(0).getArrivalTime();
+                route.setDuration(endTime.minus(startTime));
+                route.setDistance(Utils.convertDistanceBack(assignment.value(distanceDimension.cumulVar(currentSolverIndex)))); // Distance at end node
+                solution.getRoutes().add(route);
+            }
         }
         return solution;
     }

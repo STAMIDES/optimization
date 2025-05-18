@@ -182,7 +182,7 @@ public class ORToolsService implements IORToolsService {
         for (var ride : problem.getRideRequests()) {
             var pickupIndex = manager.nodeToIndex(ride.getPickup().getIndex());
             var deliveryIndex = manager.nodeToIndex(ride.getDelivery().getIndex());
-             solver.addConstraint(solver.makeLessOrEqual(
+            solver.addConstraint(solver.makeLessOrEqual(
                 timeDimension.cumulVar(deliveryIndex),
                 solver.makeSum(timeDimension.cumulVar(pickupIndex), MAX_RIDE_TIME)
             ));
@@ -302,7 +302,7 @@ public class ORToolsService implements IORToolsService {
             .toBuilder()
             .setFirstSolutionStrategy(FirstSolutionStrategy.Value.PATH_CHEAPEST_ARC)
             .setLocalSearchMetaheuristic(LocalSearchMetaheuristic.Value.GUIDED_LOCAL_SEARCH)
-            .setTimeLimit(com.google.protobuf.Duration.newBuilder().setSeconds(5).build()) // Increased time limit slightly
+            .setTimeLimit(com.google.protobuf.Duration.newBuilder().setSeconds(5).build())
             .build();
 
         var assignment = routing.solveWithParameters(searchParams);
@@ -310,7 +310,7 @@ public class ORToolsService implements IORToolsService {
         return buildSolution(problem, routing, manager, assignment, timeMatrix, vehicleBreakIntervals);
     }
 
-    // Modified signature to include vehicleBreakIntervals
+
     private static Solution buildSolution(
         Problem problem,
         RoutingModel routing,
@@ -422,10 +422,6 @@ public class ORToolsService implements IORToolsService {
             // Populate rest time window if applicable
             if (problemVehicle.isWithRest() && vehicleBreakIntervals.containsKey(vehicle)) {
                 IntervalVar breakVar = vehicleBreakIntervals.get(vehicle);
-                // Check if the break was actually performed (it should be if not optional and solution exists)
-                // For non-optional breaks, performedExpr might not be explicitly set by user but solver handles it.
-                // We can directly query startValue and endValue. If the break made the solution infeasible,
-                // 'assignment' would be null.
                 if (breakVar != null) { // Ensure breakVar was created
                     long breakStart = assignment.startValue(breakVar);
                     long breakEnd = assignment.endValue(breakVar); // For fixed duration: start + duration

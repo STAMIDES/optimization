@@ -1,11 +1,25 @@
 package org.mides.optimization.service;
 
 import com.google.ortools.constraintsolver.*;
-import org.mides.optimization.model.*;
+import org.mides.optimization.model.Coordinate;
+import org.mides.optimization.model.Depot;
+import org.mides.optimization.model.DepotDroppedRideInfo;
+import org.mides.optimization.model.Problem;
+import org.mides.optimization.model.RideRequest;
+import org.mides.optimization.model.Route;
+import org.mides.optimization.model.Solution;
+import org.mides.optimization.model.Task;
+import org.mides.optimization.model.TaskType;
+import org.mides.optimization.model.TimeWindow;
+import org.mides.optimization.model.Vehicle;
+import org.mides.optimization.model.Visit;
+import org.mides.optimization.util.Constants.ALLOW_DEPOT_DROP;
 import org.mides.optimization.util.Utils;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 
 @Service
@@ -13,6 +27,7 @@ public class ORToolsService implements IORToolsService {
 
     /* Max approx. distance between nodes * SpanCostCoefficient */
     private static final long DROP_PENALTY = 10000000 * 100;
+    private static final long DEPOT_DROP_PENALTY = DROP_PENALTY / 2; // Prefer depot drop over full drop
     private static final long MAX_RIDE_TIME = 5000;
 
     @Override
@@ -33,20 +48,33 @@ public class ORToolsService implements IORToolsService {
             ends
         );
         var routing = new RoutingModel(manager);
+        var solver = routing.solver(); // Moved solver initialization up
 
         /* Allow dropping nodes */
-        int taskIndex = problem.getVehicles().size() * 2;
-        while (taskIndex < problem.getNumberOfNodes()) {
+        if (ALLOW_DEPOT_DROP) {
+            for (var ride : problem.getRideRequests()) {
+                var pickupNodeIndex = manager.nodeToIndex(ride.getPickup().getIndex());
+                var deliveryNodeIndex = manager.nodeToIndex(ride.getDelivery().getIndex());
 
-            var numberOfStops = problem.getNumberOfStopsInRide(taskIndex);
+                // Allow dropping the pickup (which means the whole ride is dropped)
+                routing.addDisjunction(new long[]{pickupNodeIndex}, DROP_PENALTY);
 
-            var indices = new long[numberOfStops];
-            for (int i = 0; i < numberOfStops; i++) {
-                indices[i] = manager.nodeToIndex(taskIndex + i);
+                // Allow dropping just the delivery at a depot (implies pickup happened)
+                // The cost DEPOT_DROP_PENALTY should be less than DROP_PENALTY
+                routing.addDisjunction(new long[]{deliveryNodeIndex}, DEPOT_DROP_PENALTY);
             }
-
-            routing.addDisjunction(indices, DROP_PENALTY, numberOfStops);
-            taskIndex += numberOfStops;
+        } else {
+            // Original logic for dropping nodes if ALLOW_DEPOT_DROP is false
+            int taskIndex = problem.getVehicles().size() * 2;
+            while (taskIndex < problem.getNumberOfNodes()) {
+                var numberOfStops = problem.getNumberOfStopsInRide(taskIndex);
+                var indices = new long[numberOfStops];
+                for (int i = 0; i < numberOfStops; i++) {
+                    indices[i] = manager.nodeToIndex(taskIndex + i);
+                }
+                routing.addDisjunction(indices, DROP_PENALTY, numberOfStops);
+                taskIndex += numberOfStops;
+            }
         }
 
         /* Add distance dimension */
@@ -112,7 +140,6 @@ public class ORToolsService implements IORToolsService {
         }
 
         /* Add seat capacity constraints */
-        var solver = routing.solver();
         var seatDemands = problem.getSeatDemands();
         final int seatDemandCallbackIndex = routing.registerUnaryTransitCallback((long fromIndex) -> {
             int fromNode = manager.indexToNode(fromIndex);
@@ -151,10 +178,25 @@ public class ORToolsService implements IORToolsService {
             var pickupIndex = manager.nodeToIndex(ride.getPickup().getIndex());
             var deliveryIndex = manager.nodeToIndex(ride.getDelivery().getIndex());
             routing.addPickupAndDelivery(pickupIndex, deliveryIndex);
-            solver.addConstraint(solver.makeEquality(
-                routing.vehicleVar(pickupIndex),
-                routing.vehicleVar(deliveryIndex)
-            ));
+
+            if (ALLOW_DEPOT_DROP) {
+                IntVar deliveryActiveVar = routing.activeVar(deliveryIndex);
+                // Constraint: deliveryActiveVar == 0 OR vehicleVar(P) == vehicleVar(D)
+                // This is equivalent to: (deliveryActiveVar == 0) + (vehicleVar(P) == vehicleVar(D)) >= 1
+                // Let deliveryDroppedVar = (deliveryActiveVar == 0)
+                IntVar deliveryDroppedVar = solver.makeIsEqualCstVar(deliveryActiveVar, 0);
+                // Let sameVehicleVar = (vehicleVar(P) == vehicleVar(D))
+                IntVar sameVehicleVar = solver.makeIsEqualVar(routing.vehicleVar(pickupIndex), routing.vehicleVar(deliveryIndex));
+
+                solver.addConstraint(
+                    solver.makeSumGreaterOrEqual(new IntVar[]{deliveryDroppedVar, sameVehicleVar}, 1)
+                );
+            } else {
+                solver.addConstraint(solver.makeEquality(
+                    routing.vehicleVar(pickupIndex),
+                    routing.vehicleVar(deliveryIndex)
+                ));
+            }
             solver.addConstraint(solver.makeLessOrEqual(
                 distanceDimension.cumulVar(pickupIndex),
                 distanceDimension.cumulVar(deliveryIndex)
@@ -165,10 +207,20 @@ public class ORToolsService implements IORToolsService {
         for (var ride : problem.getRideRequests()) {
             var pickupIndex = manager.nodeToIndex(ride.getPickup().getIndex());
             var deliveryIndex = manager.nodeToIndex(ride.getDelivery().getIndex());
-            solver.addConstraint(solver.makeLessOrEqual(
+
+            Constraint maxRideTimeConstraint = solver.makeLessOrEqual(
                 timeDimension.cumulVar(deliveryIndex),
                 solver.makeSum(timeDimension.cumulVar(pickupIndex), MAX_RIDE_TIME)
-            ));
+            );
+
+            if (ALLOW_DEPOT_DROP) {
+                IntVar deliveryActiveVar = routing.activeVar(deliveryIndex);
+                // Enforce constraint only when deliveryActiveVar is 1 (delivery is performed).
+                // If deliveryActiveVar is 0 (delivery is dropped/depot-dropped), the constraint is ignored.
+                solver.addConstraint(maxRideTimeConstraint).when(deliveryActiveVar.isEqualTo(1));
+            } else {
+                solver.addConstraint(maxRideTimeConstraint);
+            }
         }
 
         /* Add constraint for rides to be contained on vehicles depot start and end */
@@ -200,8 +252,18 @@ public class ORToolsService implements IORToolsService {
 
                 IntVar isDeliveryTimeGreaterThanStart = solver.makeIsGreaterOrEqualCstVar(deliveryTime, vehicleStartTime);
                 IntVar isDeliveryTimeLessThanEnd = solver.makeIsLessOrEqualCstVar(deliveryTime, vehicleEndTime);
-                solver.addConstraint(solver.makeLessOrEqual(isVehicleUsedForPickup, isDeliveryTimeGreaterThanStart));
-                solver.addConstraint(solver.makeLessOrEqual(isVehicleUsedForPickup, isDeliveryTimeLessThanEnd));
+
+                Constraint deliveryFitsAfterVehicleStartConstraint = solver.makeLessOrEqual(isVehicleUsedForPickup, isDeliveryTimeGreaterThanStart);
+                Constraint deliveryFitsBeforeVehicleEndConstraint = solver.makeLessOrEqual(isVehicleUsedForPickup, isDeliveryTimeLessThanEnd);
+
+                if (ALLOW_DEPOT_DROP) {
+                    IntVar deliveryActiveVar = routing.activeVar(deliveryIndex);
+                    solver.addConstraint(deliveryFitsAfterVehicleStartConstraint).when(deliveryActiveVar.isEqualTo(1));
+                    solver.addConstraint(deliveryFitsBeforeVehicleEndConstraint).when(deliveryActiveVar.isEqualTo(1));
+                } else {
+                    solver.addConstraint(deliveryFitsAfterVehicleStartConstraint);
+                    solver.addConstraint(deliveryFitsBeforeVehicleEndConstraint);
+                }
             }
             vehicleIndex++;
         }
@@ -258,20 +320,72 @@ public class ORToolsService implements IORToolsService {
         Solution solution = new Solution();
 
         /* Dropped rides */
-        for (int node = 0; node < routing.size(); node++) {
-            if (routing.isStart(node) || routing.isEnd(node)) {
+        // This section now identifies rides where the PICKUP task was dropped.
+        // If only delivery is dropped (depot drop), it won't be added here.
+        for (int i = 0; i < problem.getNumberOfNodes(); ++i) {
+            long nodeIndexInRoutingModel = manager.nodeToIndex(i);
+            if (routing.isStart(nodeIndexInRoutingModel) || routing.isEnd(nodeIndexInRoutingModel)) {
                 continue;
             }
-            if (assignment.value(routing.nextVar(node)) != node) {
-                continue;
+            // A node is considered "dropped" by the solver if its activeVar is 0,
+            // or if nextVar(node) == node (meaning it's not part of a route).
+            // We are interested in tasks that are not performed.
+            if (assignment.value(routing.activeVar(nodeIndexInRoutingModel)) == 0) {
+                Task task = problem.getTasksByIndex().get(i);
+                if (task != null && task.getType() == TaskType.PICKUP) {
+                    RideRequest ride = task.getRide();
+                    if (ride != null && !solution.getDroppedRides().contains(ride.getId())) {
+                        solution.getDroppedRides().add(ride.getId());
+                    }
+                }
             }
+        }
 
-            int droppedNode = manager.indexToNode(node);
-            var ride = problem.getTasksByIndex().get(droppedNode).getRide();
-            var rideId = ride != null ? ride.getId() : null;
+        /* Populate Depot Dropped Rides Information */
+        if (ALLOW_DEPOT_DROP) {
+            for (RideRequest rideRequest : problem.getRideRequests()) {
+                long pickupNodeOriginalIdx = manager.nodeToIndex(rideRequest.getPickup().getIndex());
+                long deliveryNodeOriginalIdx = manager.nodeToIndex(rideRequest.getDelivery().getIndex());
 
-            if (rideId != null && !solution.getDroppedRides().contains(rideId)) {
-                solution.getDroppedRides().add(rideId);
+                boolean pickupPerformed = assignment.value(routing.activeVar(pickupNodeOriginalIdx)) == 1;
+                boolean deliveryPerformed = assignment.value(routing.activeVar(deliveryNodeOriginalIdx)) == 1;
+
+                if (pickupPerformed && !deliveryPerformed) {
+                    // This is a depot drop
+                    String vehicleId = null;
+                    Depot actualDropDepot = null;
+                    Duration timeOfDropAtDepot = null;
+                    int vehicleIdxAssignedToPickup = -1;
+
+                    if (assignment.bound(routing.vehicleVar(pickupNodeOriginalIdx))) {
+                        vehicleIdxAssignedToPickup = (int) assignment.value(routing.vehicleVar(pickupNodeOriginalIdx));
+                    }
+
+                    if (vehicleIdxAssignedToPickup != -1) {
+                        Vehicle assignedVehicle = problem.getVehicles().get(vehicleIdxAssignedToPickup);
+                        vehicleId = assignedVehicle.getId();
+                        actualDropDepot = assignedVehicle.getDepotEnd(); // Assuming drop at assigned vehicle's end depot
+
+                        // Time of drop is the arrival time at the pickup node that is then taken to depot.
+                        // TODO: Refine this time to be actual depot arrival time of the vehicle.
+                        // This currently represents the service time of the pickup itself.
+                        timeOfDropAtDepot = Duration.ofSeconds(assignment.min(timeDimension.cumulVar(pickupNodeOriginalIdx)));
+
+                        DepotDroppedRideInfo depotDropInfo = DepotDroppedRideInfo.builder()
+                                .rideId(rideRequest.getId())
+                                .userId(rideRequest.getUserId())
+                                .originalPickupCoordinates(rideRequest.getPickup().getCoordinates())
+                                .originalPickupAddress(rideRequest.getPickup().getAddress())
+                                .originalDeliveryCoordinates(rideRequest.getDelivery().getCoordinates())
+                                .originalDeliveryAddress(rideRequest.getDelivery().getAddress())
+                                .droppedAtDepotId(actualDropDepot != null ? actualDropDepot.getId() : "UNKNOWN_DEPOT")
+                                .droppedAtDepotCoordinates(actualDropDepot != null ? actualDropDepot.getCoordinates() : null)
+                                .vehicleIdDroppedBy(vehicleId)
+                                .timeOfDropAtDepot(timeOfDropAtDepot)
+                                .build();
+                        solution.getDepotDroppedRides().add(depotDropInfo);
+                    }
+                }
             }
         }
 
@@ -300,6 +414,16 @@ public class ORToolsService implements IORToolsService {
                 Visit visit = new Visit();
                 visit.setPosition(position++);
                 visit.setRideId(ride != null ? ride.getId() : null);
+
+                if (ALLOW_DEPOT_DROP && ride != null && taskNodeIndex.getType() == TaskType.PICKUP) {
+                    long deliveryNodeOriginalIdx = manager.nodeToIndex(ride.getDelivery().getIndex());
+                    boolean deliveryPerformed = assignment.value(routing.activeVar(deliveryNodeOriginalIdx)) == 1;
+                    if (!deliveryPerformed) {
+                        // This pickup is part of a ride where the original delivery was not performed (depot drop).
+                        visit.setDepotDropPickup(true);
+                    }
+                }
+
                 visit.setUserId(ride != null ? ride.getUserId() : null);
                 visit.setRideDirection(ride != null ? ride.getDirection() : null);
                 visit.setAddress(taskNodeIndex.getAddress());

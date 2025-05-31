@@ -51,4 +51,7 @@ public class Visit {
 
     @JsonProperty("stop_id")
     private String stopId;
+
+    @JsonProperty("is_depot_drop_pickup")
+    private boolean isDepotDropPickup = false;
 }

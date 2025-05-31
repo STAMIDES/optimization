@@ -30,7 +30,7 @@ public class PickupDeliveryTask {
     private RideRequest ride;
 
     @JsonProperty("type")
-    private String type;
+    private TaskType type;
     
     public PickupDeliveryTask(int index, String address, TimeWindow timeWindow, Coordinate coordinates, String stopId) {
         this.index = index;

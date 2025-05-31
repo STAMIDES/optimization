@@ -2,6 +2,7 @@ package org.mides.optimization.service;
 
 import com.google.ortools.constraintsolver.*;
 import org.mides.optimization.model.*;
+import org.mides.optimization.util.Constants;
 import org.mides.optimization.util.Utils;
 import org.springframework.stereotype.Service;
 
@@ -13,6 +14,7 @@ public class ORToolsService implements IORToolsService {
 
     /* Max approx. distance between nodes * SpanCostCoefficient */
     private static final long DROP_PENALTY = 10000000 * 100;
+    private static final long DEPOT_DROP_PENALTY = DROP_PENALTY / 10;
     private static final long MAX_RIDE_TIME = 5000;
 
     @Override
@@ -34,19 +36,32 @@ public class ORToolsService implements IORToolsService {
         );
         var routing = new RoutingModel(manager);
 
-        /* Allow dropping nodes */
-        int taskIndex = problem.getVehicles().size() * 2;
-        while (taskIndex < problem.getNumberOfNodes()) {
+        /* Allow dropping rides and depot drops */
+        for (var ride : problem.getRideRequests()) {
+            int pickupNodeOriginalIndex = ride.getPickup().getIndex();
+            int deliveryNodeOriginalIndex = ride.getDelivery().getIndex();
 
-            var numberOfStops = problem.getNumberOfStopsInRide(taskIndex);
+            long pickupIndex = manager.nodeToIndex(pickupNodeOriginalIndex);
+            long deliveryIndex = manager.nodeToIndex(deliveryNodeOriginalIndex);
 
-            var indices = new long[numberOfStops];
-            for (int i = 0; i < numberOfStops; i++) {
-                indices[i] = manager.nodeToIndex(taskIndex + i);
+            // Option 1: Perform the full ride (Pickup and Delivery). Penalty = 0.
+            // This is implicitly handled by the pickup-delivery constraints if nodes are not dropped.
+
+            // Option 2: Drop the entire ride (both Pickup and Delivery). Penalty = DROP_PENALTY.
+            // This disjunction means if these 2 nodes are not performed, the penalty is incurred.
+            // The '2' means we expect 2 nodes (pickup and delivery) to be active for this ride.
+            // If less than 2 are active (i.e. 0, since P/D constraint links them or they are both dropped), penalty applies.
+            routing.addDisjunction(new long[]{pickupIndex, deliveryIndex}, DROP_PENALTY, 2);
+
+            if (Constants.ALLOW_DEPOT_DROP) {
+                // Option 3: Perform Pickup, but drop original Delivery (for depot drop). Penalty = DEPOT_DROP_PENALTY.
+                // This disjunction means if the deliveryNode is not performed, DEPOT_DROP_PENALTY is incurred.
+                // The '1' means we expect 1 node (the delivery node) to be active. If it's not, penalty applies.
+                // This penalty should be less than DROP_PENALTY.
+                // If this disjunction is chosen (deliveryNode is dropped), the AddPickupAndDelivery constraint
+                // for this pair will be skipped by OR-Tools, allowing pickup to occur without this specific delivery.
+                routing.addDisjunction(new long[]{deliveryIndex}, DEPOT_DROP_PENALTY, 1);
             }
-
-            routing.addDisjunction(indices, DROP_PENALTY, numberOfStops);
-            taskIndex += numberOfStops;
         }
 
         /* Add distance dimension */
@@ -119,32 +134,79 @@ public class ORToolsService implements IORToolsService {
             return seatDemands[fromNode];
         });
 
-        var seatCapacities = problem.getSeatCapacities();
+        var baseSeatCapacities = problem.getSeatCapacities(); // Get original capacities
+        long[] adjustedSeatCapacities = new long[baseSeatCapacities.length];
+        System.arraycopy(baseSeatCapacities, 0, adjustedSeatCapacities, 0, baseSeatCapacities.length);
+
+        var baseWheelchairCapacities = problem.getWheelchairCapacities();
+        long[] adjustedWheelchairCapacities = new long[baseWheelchairCapacities.length];
+        System.arraycopy(baseWheelchairCapacities, 0, adjustedWheelchairCapacities, 0, baseWheelchairCapacities.length);
+
+        for (int i = 0; i < problem.getVehicles().size(); i++) {
+            Vehicle vehicle = problem.getVehicles().get(i);
+            if (vehicle.getActiveRideIdPreBoarded() != null) {
+                RideRequest preBoardedRide = problem.getRideRequestById(vehicle.getActiveRideIdPreBoarded());
+                if (preBoardedRide != null) {
+                    long seatDemandOfPreBoarded = 0;
+                    long wheelchairDemandOfPreBoarded = 0;
+
+                    if (preBoardedRide.getPickup() != null) {
+                        // The problem statement implies pickup node original index is valid for demand arrays
+                        int pickupNodeOriginalIndex = preBoardedRide.getPickup().getIndex();
+                        // Ensure index is within bounds for safety, though problem.getSeatDemands() should be sized for all nodes
+                        if (pickupNodeOriginalIndex >= 0 && pickupNodeOriginalIndex < seatDemands.length) {
+                             seatDemandOfPreBoarded = seatDemands[pickupNodeOriginalIndex];
+                        }
+                        if (pickupNodeOriginalIndex >= 0 && pickupNodeOriginalIndex < problem.getWheelchairDemands().length) {
+                            wheelchairDemandOfPreBoarded = problem.getWheelchairDemands()[pickupNodeOriginalIndex];
+                        }
+                    }
+
+                    adjustedSeatCapacities[i] -= seatDemandOfPreBoarded;
+                    adjustedWheelchairCapacities[i] -= wheelchairDemandOfPreBoarded;
+                }
+            }
+        }
 
         routing.addDimensionWithVehicleCapacity(
             seatDemandCallbackIndex,
-            0,
-            seatCapacities,
-            true,
+            0, /* no slack */
+            adjustedSeatCapacities, /* vehicle_capacities */
+            true, /* fix_start_cumul_to_zero */
             "seat"
         );
 
         /* Add wheelchair capacity constraints */
-        var wheelchairDemands = problem.getWheelchairDemands();
-        final int wheelchairDemandCallbackIndex = routing.registerUnaryTransitCallback((long fromIndex) -> {
+        var wheelchairDemands = problem.getWheelchairDemands(); // This is already defined above, but needed for context if we split the diff. Keeping for clarity.
+        final int wheelchairDemandCallbackIndex = routing.registerUnaryTransitCallback((long fromIndex) -> { // Also defined above.
             int fromNode = manager.indexToNode(fromIndex);
             return wheelchairDemands[fromNode];
         });
 
-        var wheelchairCapacities = problem.getWheelchairCapacities();
+        // var wheelchairCapacities = problem.getWheelchairCapacities(); // This was the original line for baseWheelchairCapacities
 
         routing.addDimensionWithVehicleCapacity(
             wheelchairDemandCallbackIndex,
             0,
-            wheelchairCapacities,
+            adjustedWheelchairCapacities,
             true,
             "wheelchair"
         );
+
+        /* Enforce Delivery by the Assigned Vehicle for Pre-Boarded Rides */
+        // Note: solver is already initialized before capacity dimensions.
+        for (int currentVehicleIndex = 0; currentVehicleIndex < problem.getVehicles().size(); currentVehicleIndex++) {
+            Vehicle vehicle = problem.getVehicles().get(currentVehicleIndex);
+            if (vehicle.getActiveRideIdPreBoarded() != null) {
+                RideRequest preBoardedRide = problem.getRideRequestById(vehicle.getActiveRideIdPreBoarded());
+                if (preBoardedRide != null && preBoardedRide.getDelivery() != null) {
+                    long deliveryNodeIndex = manager.nodeToIndex(preBoardedRide.getDelivery().getIndex());
+
+                    solver.addConstraint(solver.makeEquality(routing.vehicleVar(deliveryNodeIndex), currentVehicleIndex));
+                    solver.addConstraint(solver.makeEquality(routing.activeVar(deliveryNodeIndex), 1));
+                }
+            }
+        }
 
         /* Add pickup-delivery constraints */
         for (var ride : problem.getRideRequests()) {
@@ -257,22 +319,40 @@ public class ORToolsService implements IORToolsService {
 
         Solution solution = new Solution();
 
-        /* Dropped rides */
-        for (int node = 0; node < routing.size(); node++) {
-            if (routing.isStart(node) || routing.isEnd(node)) {
-                continue;
-            }
-            if (assignment.value(routing.nextVar(node)) != node) {
-                continue;
-            }
+        /* Dropped rides and Depot Drops */
+        solution.getDroppedRides().clear(); // Clear if it was initialized with data or ensure it's empty
+        solution.getDepotDroppedRides().clear(); // Ensure the new list is also empty
 
-            int droppedNode = manager.indexToNode(node);
-            var ride = problem.getTasksByIndex().get(droppedNode).getRide();
-            var rideId = ride != null ? ride.getId() : null;
+        for (var rideRequest : problem.getRideRequests()) {
+            int pickupNodeOriginalIndex = rideRequest.getPickup().getIndex();
+            int deliveryNodeOriginalIndex = rideRequest.getDelivery().getIndex();
 
-            if (rideId != null && !solution.getDroppedRides().contains(rideId)) {
-                solution.getDroppedRides().add(rideId);
+            // Convert original node indices to routing model indices
+            long pickupRoutingIndex = manager.nodeToIndex(pickupNodeOriginalIndex);
+            long deliveryRoutingIndex = manager.nodeToIndex(deliveryNodeOriginalIndex);
+
+            // Check if pickup and delivery nodes are active in the solution
+            // An activeVar(index) is 1 if the node is performed, 0 otherwise (dropped).
+            boolean pickupIsActive = assignment.value(routing.activeVar(pickupRoutingIndex)) == 1;
+            boolean deliveryIsActive = assignment.value(routing.activeVar(deliveryRoutingIndex)) == 1;
+
+            String rideId = rideRequest.getId();
+
+            if (Constants.ALLOW_DEPOT_DROP && pickupIsActive && !deliveryIsActive) {
+                // Case: Pickup happened, but delivery didn't (and depot drops are allowed)
+                // This is a depot drop.
+                if (rideId != null && !solution.getDepotDroppedRides().contains(rideId)) {
+                    solution.getDepotDroppedRides().add(rideId);
+                }
+            } else if (!pickupIsActive) {
+                // Case: Pickup didn't happen. This means the entire ride is dropped,
+                // regardless of delivery status (which should also be inactive).
+                // Also covers cases where pickup is inactive and delivery is somehow active (should not happen).
+                if (rideId != null && !solution.getDroppedRides().contains(rideId)) {
+                    solution.getDroppedRides().add(rideId);
+                }
             }
+            // If pickupIsActive && deliveryIsActive, the ride is fully served, so no addition to either list.
         }
 
         /* Routes */

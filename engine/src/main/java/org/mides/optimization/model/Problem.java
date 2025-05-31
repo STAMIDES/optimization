@@ -182,4 +182,16 @@ public class Problem {
     public boolean isRideCompatibleWithVehicle(RideRequest ride, Vehicle vehicle) {
         return vehicle.getSupportedCharacteristics().containsAll(ride.getCharacteristics());
     }
+
+    public RideRequest getRideRequestById(String rideId) {
+        if (rideId == null || rideRequests == null) {
+            return null;
+        }
+        for (RideRequest ride : rideRequests) {
+            if (rideId.equals(ride.getId())) {
+                return ride;
+            }
+        }
+        return null; // Not found
+    }
 }

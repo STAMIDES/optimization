@@ -16,4 +16,7 @@ public class Solution {
 
     @JsonProperty("dropped_rides")
     private List<String> droppedRides = new ArrayList<>();
+
+    @JsonProperty("depot_dropped_rides")
+    private List<String> depotDroppedRides = new ArrayList<>();
 }

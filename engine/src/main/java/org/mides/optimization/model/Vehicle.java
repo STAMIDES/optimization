@@ -36,4 +36,7 @@ public class Vehicle {
     @JsonProperty("supported_characteristics")
     @JsonDeserialize(as = HashSet.class)
     private Set<String> supportedCharacteristics = new HashSet<>();
+
+    @JsonProperty("active_ride_id_pre_boarded")
+    private String activeRideIdPreBoarded;
 }

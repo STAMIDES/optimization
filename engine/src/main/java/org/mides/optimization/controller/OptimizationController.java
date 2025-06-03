@@ -45,9 +45,10 @@ public class OptimizationController {
 
         var matrixFuture = CompletableFuture.supplyAsync(() -> {
             try {
-                return osrmService.queryMatrix(problem.getAllCoordinates());
+                // Use batch processing with a batch size of 100
+                return osrmService.queryMatrixInBatches(problem.getAllCoordinates(), 100);
             } catch (Exception e) {
-                throw new QueryMatrixException("Failed to query matrix");
+                throw new QueryMatrixException("Failed to query matrix: " + e.getMessage());
             }
         }, executorService);
 

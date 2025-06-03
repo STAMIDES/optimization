@@ -9,4 +9,5 @@ import java.util.List;
 public interface IOSRMService {
     OSRMRouteResult queryRoute(List<Coordinate> coordinates);
     OSRMMatrixResult queryMatrix(List<Coordinate> coordinates);
+    OSRMMatrixResult queryMatrixInBatches(List<Coordinate> coordinates, int batchSize);
 }

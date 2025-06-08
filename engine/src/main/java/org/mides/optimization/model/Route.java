@@ -1,5 +1,6 @@
 package org.mides.optimization.model;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import lombok.Data;
@@ -32,5 +33,9 @@ public class Route {
 
     @JsonProperty("time_window")
     private TimeWindow timeWindow = new TimeWindow();
+
+    @JsonProperty("rest_time_window")
+    @JsonInclude(JsonInclude.Include.NON_NULL) // Only include in JSON if not null
+    private TimeWindow restTimeWindow;
 
 }

@@ -355,7 +355,7 @@ public class ORToolsService implements IORToolsService {
 
         var searchParams = main.defaultRoutingSearchParameters()
             .toBuilder()
-            .setFirstSolutionStrategy(FirstSolutionStrategy.Value.PATH_CHEAPEST_ARC)
+            .setFirstSolutionStrategy(FirstSolutionStrategy.Value.AUTOMATIC)
             .setLocalSearchMetaheuristic(LocalSearchMetaheuristic.Value.GUIDED_LOCAL_SEARCH)
             .setTimeLimit(com.google.protobuf.Duration.newBuilder().setSeconds(5).build())
             .build();

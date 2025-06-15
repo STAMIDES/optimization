@@ -28,6 +28,11 @@ public class ORToolsService implements IORToolsService {
     private static final long REST_TIME_MIN_START_AFTER_RIDE_START_SECONDS = 1 * 60 * 60; // 1 hour
     private static final long REST_TIME_MAX_START_BEFORE_RIDE_END_SECONDS = 1 * 60 * 60; // 1 hour
 
+    // Constants for stop times
+    private static final long TIME_STOP_COMMON = 1 * 60; // 1 minute
+    private static final long TIME_STOP_WHEELCHAIR = 2 * 60; // 2 minutes
+    private static final long TIME_STOP_ELECTRIC_RAMP = 3 * 60; // 3 minutes
+
 
     @Override
     public Solution solve(Problem problem, long[][] distanceMatrix, long[][] timeMatrix) {
@@ -89,7 +94,36 @@ public class ORToolsService implements IORToolsService {
         {
             var fromNode = manager.indexToNode(fromIndex);
             var toNode = manager.indexToNode(toIndex);
-            return timeMatrix[fromNode][toNode];
+            
+            // Base travel time between nodes
+            long travelTime = timeMatrix[fromNode][toNode];
+            
+            // Add stop time when leaving a pickup/delivery node (not depot nodes)
+            long stopTime = 0;
+            if (fromNode >= problem.getVehicles().size() * 2) { // Not a depot node
+                var taskNode = problem.getTasksByIndex().get(fromNode);
+                var ride = taskNode.getRide();
+                
+                if (ride != null) {
+                    // Check if ride requires electric ramp
+                    logger.info("Ride ID: {}", ride.getId());
+                    if (ride.getCharacteristics() != null && ride.getCharacteristics().contains("rampa_electrica")) {
+                        logger.info("Ride requires electric ramp");
+                        stopTime = TIME_STOP_ELECTRIC_RAMP;
+                    } else if (ride.isWheelchairRequired()) {
+                        logger.info("Ride requires wheelchair");
+                        stopTime = TIME_STOP_WHEELCHAIR;
+                    } else {
+                        logger.info("Ride does not require wheelchair or electric ramp");
+                        stopTime = TIME_STOP_COMMON;
+                    }
+                } else {
+                    logger.info("No ride associated with node");
+                    stopTime = TIME_STOP_COMMON;
+                }
+            }
+            
+            return travelTime + stopTime;
         });
         routing.addDimension(
             timeCallbackIndex,

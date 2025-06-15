@@ -106,19 +106,14 @@ public class ORToolsService implements IORToolsService {
                 
                 if (ride != null) {
                     // Check if ride requires electric ramp
-                    logger.info("Ride ID: {}", ride.getId());
                     if (ride.getCharacteristics() != null && ride.getCharacteristics().contains("rampa_electrica")) {
-                        logger.info("Ride requires electric ramp");
                         stopTime = TIME_STOP_ELECTRIC_RAMP;
                     } else if (ride.isWheelchairRequired()) {
-                        logger.info("Ride requires wheelchair");
                         stopTime = TIME_STOP_WHEELCHAIR;
                     } else {
-                        logger.info("Ride does not require wheelchair or electric ramp");
                         stopTime = TIME_STOP_COMMON;
                     }
                 } else {
-                    logger.info("No ride associated with node");
                     stopTime = TIME_STOP_COMMON;
                 }
             }

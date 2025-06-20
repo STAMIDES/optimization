@@ -401,7 +401,7 @@ public class ORToolsService implements IORToolsService {
             .toBuilder()
             .setFirstSolutionStrategy(FirstSolutionStrategy.Value.AUTOMATIC)
             .setLocalSearchMetaheuristic(LocalSearchMetaheuristic.Value.GUIDED_LOCAL_SEARCH)
-            .setTimeLimit(com.google.protobuf.Duration.newBuilder().setSeconds(5).build())
+            .setTimeLimit(com.google.protobuf.Duration.newBuilder().setSeconds(10).build())
             .build();
 
         var assignment = routing.solveWithParameters(searchParams);

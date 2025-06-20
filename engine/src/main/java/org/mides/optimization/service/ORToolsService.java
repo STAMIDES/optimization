@@ -29,9 +29,9 @@ public class ORToolsService implements IORToolsService {
     private static final long REST_TIME_MAX_START_BEFORE_RIDE_END_SECONDS = 1 * 60 * 60; // 1 hour
 
     // Constants for stop times
-    private static final long TIME_STOP_COMMON = 1 * 60; // 1 minute
-    private static final long TIME_STOP_WHEELCHAIR = 2 * 60; // 2 minutes
-    private static final long TIME_STOP_ELECTRIC_RAMP = 3 * 60; // 3 minutes
+    private static final long TIME_STOP_COMMON = 2 * 60; // 2 minute
+    private static final long TIME_STOP_WHEELCHAIR = 5 * 60; // 5 minutes
+    private static final long TIME_STOP_ELECTRIC_RAMP = 5 * 60; // 5 minutes
 
 
     @Override

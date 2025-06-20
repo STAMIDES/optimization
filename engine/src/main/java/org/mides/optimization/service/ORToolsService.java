@@ -145,6 +145,14 @@ public class ORToolsService implements IORToolsService {
                 vehicle.getTimeWindow().startSeconds(),
                 vehicle.getTimeWindow().endSeconds()
             );
+            
+            // Ensure vehicle end depot respects time window for ALL vehicles
+            var endIndex = routing.end(vehicleIndex);
+            timeDimension.cumulVar(endIndex).setRange(
+                vehicle.getTimeWindow().startSeconds(),
+                vehicle.getTimeWindow().endSeconds()
+            );
+            
             vehicleIndex++;
         }
 
@@ -325,6 +333,13 @@ public class ORToolsService implements IORToolsService {
                     solver.addConstraint(solver.makeLessOrEqual(
                         breakInterval.endExpr(),
                         solver.makeSum(actualDepotEndTime, -REST_TIME_MAX_START_BEFORE_RIDE_END_SECONDS) // actualDepotEndTime - offset
+                    ));
+
+                    // Constraint 3: Ensure actual depot end time respects vehicle time window
+                    // This prevents the vehicle from arriving at depot later than its allowed time window
+                    solver.addConstraint(solver.makeLessOrEqual(
+                        actualDepotEndTime,
+                        vehicleEndTwSeconds
                     ));
 
                     // Add constraint: break cannot happen during a ride on this vehicle

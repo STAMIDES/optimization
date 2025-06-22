@@ -85,10 +85,8 @@ public class ORToolsService implements IORToolsService {
             true,
             "distance"
         );
+        
         routing.setArcCostEvaluatorOfAllVehicles(distanceCallbackIndex);
-        var distanceDimension = routing.getMutableDimension("distance");
-        distanceDimension.setGlobalSpanCostCoefficient(100);
-
         /* Add time dimension */
         var timeCallbackIndex = routing.registerTransitCallback((fromIndex, toIndex) ->
         {
@@ -128,6 +126,7 @@ public class ORToolsService implements IORToolsService {
             "time"
         );
         var timeDimension = routing.getMutableDimension("time");
+        timeDimension.setGlobalSpanCostCoefficient(1);
         for (var i = problem.getVehicles().size() * 2; i < problem.getNumberOfNodes(); i++)
         {
             var index = manager.nodeToIndex(i);
@@ -135,7 +134,6 @@ public class ORToolsService implements IORToolsService {
                 problem.getTasksByIndex().get(i).getTimeWindow().startSeconds(),
                 problem.getTasksByIndex().get(i).getTimeWindow().endSeconds()
             );
-            routing.addToAssignment(timeDimension.slackVar(index));
         }
 
         int vehicleIndex = 0;
@@ -152,19 +150,9 @@ public class ORToolsService implements IORToolsService {
                 vehicle.getTimeWindow().startSeconds(),
                 vehicle.getTimeWindow().endSeconds()
             );
-            
             vehicleIndex++;
         }
 
-        for (var vehicle = 0; vehicle < problem.getVehicles().size(); vehicle++)
-        {
-            routing.addVariableMaximizedByFinalizer(
-                timeDimension.cumulVar(routing.start(vehicle))
-            );
-            routing.addVariableMinimizedByFinalizer(
-                timeDimension.cumulVar(routing.end(vehicle))
-            );
-        }
 
         /* Add seat capacity constraints */
         var seatDemands = problem.getSeatDemands();
@@ -199,7 +187,7 @@ public class ORToolsService implements IORToolsService {
             true,
             "wheelchair"
         );
-
+        var distanceDimension = routing.getMutableDimension("distance");
         /* Add pickup-delivery constraints */
         for (var ride : problem.getRideRequests()) {
             var pickupIndex = manager.nodeToIndex(ride.getPickup().getIndex());
@@ -213,6 +201,21 @@ public class ORToolsService implements IORToolsService {
                 distanceDimension.cumulVar(pickupIndex),
                 distanceDimension.cumulVar(deliveryIndex)
             ));
+            var deliveryTask = ride.getDelivery();
+            if (deliveryTask.getTimeWindow() != null) {
+                
+                long windowStartSeconds = deliveryTask.getTimeWindow().startSeconds();
+                long penaltyCostPerSecond = 1000; 
+
+                // 4. Aplicar el límite superior suave.
+                //    Esta es la función que integra la penalización en la búsqueda principal del solver.
+                timeDimension.setCumulVarSoftUpperBound(
+                    deliveryIndex,          // El índice del nodo de entrega en el solver
+                    windowStartSeconds,     // El umbral: el inicio de la ventana horaria
+                    penaltyCostPerSecond    // El coste por cada segundo que se exceda el umbral
+                );
+            }
+
         }
 
         /* Add maximum ride time for a single pickup-delivery constraint */

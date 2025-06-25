@@ -72,38 +72,103 @@ public class ORToolsService implements IORToolsService {
 
         /* Allow dropping nodes */
         if (!skipDropPenalty) {
+            logger.info("=== PROCESSING DROP PENALTY CONSTRAINTS ===");
+            logger.info("Total ride requests to process: {}", problem.getRideRequests().size());
+            
+            // Log all ride requests first
+            for (int i = 0; i < problem.getRideRequests().size(); i++) {
+                RideRequest ride = problem.getRideRequests().get(i);
+                logger.info("Ride #{}: ID='{}', Pickup.Index={}, Delivery.Index={}, UserId='{}'", 
+                    i, ride.getId(), ride.getPickup().getIndex(), ride.getDelivery().getIndex(), ride.getUserId());
+            }
+            
             // Group ride requests by their ID to handle multi-part rides atomically.
             Map<String, List<RideRequest>> ridesById = problem.getRideRequests().stream()
                     .filter(r -> r.getId() != null && !r.getId().isEmpty())
                     .collect(Collectors.groupingBy(RideRequest::getId));
 
+            logger.info("After filtering and grouping by ID: {} unique ride groups", ridesById.size());
+            
+            // Log each group
+            ridesById.forEach((rideId, rideGroup) -> {
+                logger.info("Group ID '{}' contains {} rides:", rideId, rideGroup.size());
+                for (int i = 0; i < rideGroup.size(); i++) {
+                    RideRequest ride = rideGroup.get(i);
+                    logger.info("  - Ride #{} in group: Pickup.Index={}, Delivery.Index={}, UserId='{}'",
+                        i, ride.getPickup().getIndex(), ride.getDelivery().getIndex(), ride.getUserId());
+                }
+            });
+
             // Process rides with IDs. This handles both single rides with an ID and multi-part rides.
             for (List<RideRequest> rideGroup : ridesById.values()) {
+                String groupId = rideGroup.get(0).getId();
+                logger.info("--- Processing group ID '{}' with {} rides ---", groupId, rideGroup.size());
+                
                 long[] groupIndices = rideGroup.stream()
-                    .flatMapToLong(r -> LongStream.of(
-                        manager.nodeToIndex(r.getPickup().getIndex()),
-                        manager.nodeToIndex(r.getDelivery().getIndex())
-                    ))
+                    .flatMapToLong(r -> {
+                        long pickupSolverIndex = manager.nodeToIndex(r.getPickup().getIndex());
+                        long deliverySolverIndex = manager.nodeToIndex(r.getDelivery().getIndex());
+                        logger.info("  Ride in group '{}': Pickup node {} -> solver index {}, Delivery node {} -> solver index {}",
+                            groupId, r.getPickup().getIndex(), pickupSolverIndex, 
+                            r.getDelivery().getIndex(), deliverySolverIndex);
+                        return LongStream.of(pickupSolverIndex, deliverySolverIndex);
+                    })
                     .toArray();
 
                 if (groupIndices.length == 0) {
+                    logger.warn("Group ID '{}' resulted in 0 indices, skipping", groupId);
                     continue;
                 }
-                logger.info("Group of ride ID {} has {} nodes, which are: {}", rideGroup.get(0).getId(), groupIndices.length, groupIndices);
+                
+                logger.info("Group ID '{}' has {} solver indices: {}", groupId, groupIndices.length, groupIndices);
+                
                 // For rides with multiple parts, we want all parts to be served or none at all.
                 // We enforce this by making their 'active' status equal.
-                for (int i = 1; i < groupIndices.length; i++) {
-                    solver.addConstraint(solver.makeEquality(
-                            routing.activeVar(groupIndices[0]),
-                            routing.activeVar(groupIndices[i])
-                    ));
+                logger.info("Adding {} equality constraints for group ID '{}'", groupIndices.length - 1, groupId);
+                if (groupIndices.length > 2) {
+                    for (int i = 2; i < groupIndices.length; i=i+2) {
+                        logger.info("  Adding equality constraint: activeVar({}) == activeVar({})", groupIndices[0], groupIndices[i]);
+                        solver.addConstraint(solver.makeEquality(
+                                routing.activeVar(groupIndices[0]),
+                                routing.activeVar(groupIndices[i])
+                        ));
+                        //each pickup and delivery pair are already the same
+                        //here we make sure that if the ride is a multi-part ride, then each pickup only happens if all pickups happen(all or nothing)
+                    }
                 }
 
+                long totalPenalty = DROP_PENALTY * groupIndices.length;
+                logger.info("Adding disjunction for group ID '{}': first index {}, penalty {}", 
+                    groupId, groupIndices[0], totalPenalty);
+                
+                // for (long nodeIndex : groupIndices) {
+                //     routing.addDisjunction(
+                //         new long[]{nodeIndex},
+                //         DROP_PENALTY // Use the per-node penalty here
+                //     );
+                // }
                 routing.addDisjunction( 
-                    new long[]{groupIndices[0]}, 
-                    DROP_PENALTY * groupIndices.length
+                    new long[]{groupIndices[0]},
+                    totalPenalty
                 );
+                
+                logger.info("--- Finished processing group ID '{}' ---", groupId);
             }
+            
+            // Check for rides without IDs
+            long ridesWithoutId = problem.getRideRequests().stream()
+                .filter(r -> r.getId() == null || r.getId().isEmpty())
+                .count();
+            
+            if (ridesWithoutId > 0) {
+                logger.warn("Found {} ride requests without IDs - these will NOT be handled by drop penalty constraints!", ridesWithoutId);
+                problem.getRideRequests().stream()
+                    .filter(r -> r.getId() == null || r.getId().isEmpty())
+                    .forEach(ride -> logger.warn("  Ride without ID: Pickup.Index={}, Delivery.Index={}, UserId='{}'",
+                        ride.getPickup().getIndex(), ride.getDelivery().getIndex(), ride.getUserId()));
+            }
+            
+            logger.info("=== FINISHED DROP PENALTY CONSTRAINTS ===");
         } else {
             logger.warn("DEBUG: Skipping drop penalty constraints");
         }
@@ -127,10 +192,10 @@ public class ORToolsService implements IORToolsService {
         } else {
             logger.warn("DEBUG: Skipping distance dimension");
         }
-        var timeDimension = routing.getMutableDimension("time");
 
         /* Add time dimension */
         int vehicleIndex = 0;
+        RoutingDimension timeDimension = null;
 
         if (!skipTimeDimension) {
             var timeCallbackIndex = routing.registerTransitCallback((fromIndex, toIndex) ->
@@ -170,6 +235,7 @@ public class ORToolsService implements IORToolsService {
                 false, /* Don't force to start cumulative var at zero*/
                 "time"
             );
+            timeDimension = routing.getMutableDimension("time");
             timeDimension.setGlobalSpanCostCoefficient(1);
             for (var i = problem.getVehicles().size() * 2; i < problem.getNumberOfNodes(); i++)
             {
@@ -276,7 +342,7 @@ public class ORToolsService implements IORToolsService {
         }
 
         /* Add maximum ride time for a single pickup-delivery constraint */
-        if (!skipMaxRideTime) {
+        if (!skipMaxRideTime && timeDimension != null) {
             for (var ride : problem.getRideRequests()) {
                 var pickupIndex = manager.nodeToIndex(ride.getPickup().getIndex());
                 var deliveryIndex = manager.nodeToIndex(ride.getDelivery().getIndex());
@@ -290,7 +356,7 @@ public class ORToolsService implements IORToolsService {
         }
 
         /* Add constraint for rides to be contained on vehicles depot start and end */
-        if (!skipVehicleTimeConstraints) {
+        if (!skipVehicleTimeConstraints && timeDimension != null) {
             vehicleIndex = 0;
             for (var vehicle : problem.getVehicles()) {
                 long vehicleStartTime = vehicle.getTimeWindow().startSeconds();
@@ -359,7 +425,7 @@ public class ORToolsService implements IORToolsService {
         }
 
         // Add break constraints for vehicles with with_rest = true
-        if (!skipRestConstraints) {
+        if (!skipRestConstraints && timeDimension != null) {
             // Register a callback that returns 0 for pre/post travel time for breaks.
             // This means breaks don't add any extra travel time beyond their own duration.
             final int zeroTransitCallbackIndex = routing.registerTransitCallback(
@@ -640,7 +706,12 @@ public class ORToolsService implements IORToolsService {
                 var endTime = route.getVisits().get(route.getVisits().size() - 1).getArrivalTime();
                 var startTime = route.getVisits().get(0).getArrivalTime();
                 route.setDuration(endTime.minus(startTime));
-                route.setDistance(Utils.convertDistanceBack(assignment.value(distanceDimension.cumulVar(currentSolverIndex))));
+                if (distanceDimension != null) {
+                    route.setDistance(Utils.convertDistanceBack(assignment.value(distanceDimension.cumulVar(currentSolverIndex))));
+                } else {
+                    // Debug mode: set random distance since distanceDimension is null
+                    route.setDistance(position * 1000.0); // 1km per position, arbitrary value
+                }
                 solution.getRoutes().add(route);
             }
         }

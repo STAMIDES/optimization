@@ -23,7 +23,7 @@ public class ORToolsService implements IORToolsService {
 
     /* Max approx. distance between nodes * SpanCostCoefficient */
     private static final long DROP_PENALTY = 10000000 * 100;
-    private static final long MAX_RIDE_TIME = 5000; // seconds, approx 1h23m
+    private static final long MAX_RIDE_TIME = 50000; // seconds, approx 1h23m
 
     // Constants for vehicle rests
     private static final long REST_TIME_SECONDS = 30 * 60; // 30 minutes
@@ -69,106 +69,76 @@ public class ORToolsService implements IORToolsService {
 
         // Map to store break interval variables for each vehicle that has a rest
         Map<Integer, IntervalVar> vehicleBreakIntervals = new HashMap<>();
-
         /* Allow dropping nodes */
         if (!skipDropPenalty) {
             logger.info("=== PROCESSING DROP PENALTY CONSTRAINTS ===");
-            logger.info("Total ride requests to process: {}", problem.getRideRequests().size());
-            
-            // Log all ride requests first
-            for (int i = 0; i < problem.getRideRequests().size(); i++) {
-                RideRequest ride = problem.getRideRequests().get(i);
-                logger.info("Ride #{}: ID='{}', Pickup.Index={}, Delivery.Index={}, UserId='{}'", 
-                    i, ride.getId(), ride.getPickup().getIndex(), ride.getDelivery().getIndex(), ride.getUserId());
-            }
-            
+
             // Group ride requests by their ID to handle multi-part rides atomically.
             Map<String, List<RideRequest>> ridesById = problem.getRideRequests().stream()
                     .filter(r -> r.getId() != null && !r.getId().isEmpty())
                     .collect(Collectors.groupingBy(RideRequest::getId));
 
-            logger.info("After filtering and grouping by ID: {} unique ride groups", ridesById.size());
-            
-            // Log each group
-            ridesById.forEach((rideId, rideGroup) -> {
-                logger.info("Group ID '{}' contains {} rides:", rideId, rideGroup.size());
-                for (int i = 0; i < rideGroup.size(); i++) {
-                    RideRequest ride = rideGroup.get(i);
-                    logger.info("  - Ride #{} in group: Pickup.Index={}, Delivery.Index={}, UserId='{}'",
-                        i, ride.getPickup().getIndex(), ride.getDelivery().getIndex(), ride.getUserId());
-                }
-            });
+            logger.info("Found {} unique ride groups to process for drop penalties.", ridesById.size());
 
             // Process rides with IDs. This handles both single rides with an ID and multi-part rides.
-            for (List<RideRequest> rideGroup : ridesById.values()) {
-                String groupId = rideGroup.get(0).getId();
-                logger.info("--- Processing group ID '{}' with {} rides ---", groupId, rideGroup.size());
+            for (Map.Entry<String, List<RideRequest>> entry : ridesById.entrySet()) {
+                String groupId = entry.getKey();
+                List<RideRequest> rideGroup = entry.getValue();
                 
-                long[] groupIndices = rideGroup.stream()
-                    .flatMapToLong(r -> {
-                        long pickupSolverIndex = manager.nodeToIndex(r.getPickup().getIndex());
-                        long deliverySolverIndex = manager.nodeToIndex(r.getDelivery().getIndex());
-                        logger.info("  Ride in group '{}': Pickup node {} -> solver index {}, Delivery node {} -> solver index {}",
-                            groupId, r.getPickup().getIndex(), pickupSolverIndex, 
-                            r.getDelivery().getIndex(), deliverySolverIndex);
-                        return LongStream.of(pickupSolverIndex, deliverySolverIndex);
-                    })
+                logger.info("--- Processing group ID '{}' with {} parts ---", groupId, rideGroup.size());
+
+                // Get all solver indices for this multi-step ride group.
+                long[] allGroupSolverIndices = rideGroup.stream()
+                    .flatMapToLong(r -> LongStream.of(
+                        manager.nodeToIndex(r.getPickup().getIndex()),
+                        manager.nodeToIndex(r.getDelivery().getIndex())
+                    ))
                     .toArray();
 
-                if (groupIndices.length == 0) {
-                    logger.warn("Group ID '{}' resulted in 0 indices, skipping", groupId);
+                if (allGroupSolverIndices.length == 0) {
+                    logger.warn("Group ID '{}' resulted in 0 indices, skipping.", groupId);
                     continue;
                 }
                 
-                logger.info("Group ID '{}' has {} solver indices: {}", groupId, groupIndices.length, groupIndices);
-                
-                // For rides with multiple parts, we want all parts to be served or none at all.
-                // We enforce this by making their 'active' status equal.
-                logger.info("Adding {} equality constraints for group ID '{}'", groupIndices.length - 1, groupId);
-                if (groupIndices.length > 2) {
-                    for (int i = 2; i < groupIndices.length; i=i+2) {
-                        logger.info("  Adding equality constraint: activeVar({}) == activeVar({})", groupIndices[0], groupIndices[i]);
+                // 1. LINK FATES: Enforce that all pickups in the group are served or dropped together.
+                // The addPickupAndDelivery constraint already links each pickup to its delivery.
+                // We only need to link the first pickup to all subsequent pickups.
+                if (rideGroup.size() > 1) {
+                    long firstPickupIndex = manager.nodeToIndex(rideGroup.get(0).getPickup().getIndex());
+                    for (int i = 1; i < rideGroup.size(); i++) {
+                        long subsequentPickupIndex = manager.nodeToIndex(rideGroup.get(i).getPickup().getIndex());
+                        logger.info("  Adding equality constraint for group '{}': activeVar({}) == activeVar({})",
+                            groupId, firstPickupIndex, subsequentPickupIndex);
                         solver.addConstraint(solver.makeEquality(
-                                routing.activeVar(groupIndices[0]),
-                                routing.activeVar(groupIndices[i])
+                                routing.activeVar(firstPickupIndex),
+                                routing.activeVar(subsequentPickupIndex)
                         ));
-                        //each pickup and delivery pair are already the same
-                        //here we make sure that if the ride is a multi-part ride, then each pickup only happens if all pickups happen(all or nothing)
                     }
                 }
 
-                long totalPenalty = DROP_PENALTY * groupIndices.length;
-                logger.info("Adding disjunction for group ID '{}': first index {}, penalty {}", 
-                    groupId, groupIndices[0], totalPenalty);
+                // 2. APPLY PENALTY: Add a disjunction for the *first pickup node* with the total penalty.
+                // This is the "master" node that triggers the drop for the whole group.
+                // long masterNodeIndex = allGroupSolverIndices[0];
+                // long totalPenalty = DROP_PENALTY * rideGroup.size(); // Penalty per ride part
+                // logger.info("  Adding MASTER disjunction for group '{}' on node {}. Penalty: {}",
+                //     groupId, masterNodeIndex, totalPenalty);
+                // routing.addDisjunction(
+                //     new long[]{masterNodeIndex},
+                //     totalPenalty
+                // );
+
+                // 3. MAKE OTHERS OPTIONAL: Add disjunctions for all *other* nodes in the group
+                // with a penalty of ZERO. This marks them as optional without adding cost,
+                // resolving the "mandatory vs optional" conflict.
+                for (int i = 0; i < allGroupSolverIndices.length; i++) {
+                    long otherNodeIndex = allGroupSolverIndices[i];
+                    // logger.debug("  Adding zero-penalty disjunction for node {} to make it optional.", otherNodeIndex);
+                    routing.addDisjunction(new long[]{otherNodeIndex}, DROP_PENALTY);
+                }
                 
-                // for (long nodeIndex : groupIndices) {
-                //     routing.addDisjunction(
-                //         new long[]{nodeIndex},
-                //         DROP_PENALTY // Use the per-node penalty here
-                //     );
-                // }
-                routing.addDisjunction( 
-                    new long[]{groupIndices[0]},
-                    totalPenalty
-                );
                 
                 logger.info("--- Finished processing group ID '{}' ---", groupId);
             }
-            
-            // Check for rides without IDs
-            long ridesWithoutId = problem.getRideRequests().stream()
-                .filter(r -> r.getId() == null || r.getId().isEmpty())
-                .count();
-            
-            if (ridesWithoutId > 0) {
-                logger.warn("Found {} ride requests without IDs - these will NOT be handled by drop penalty constraints!", ridesWithoutId);
-                problem.getRideRequests().stream()
-                    .filter(r -> r.getId() == null || r.getId().isEmpty())
-                    .forEach(ride -> logger.warn("  Ride without ID: Pickup.Index={}, Delivery.Index={}, UserId='{}'",
-                        ride.getPickup().getIndex(), ride.getDelivery().getIndex(), ride.getUserId()));
-            }
-            
-            logger.info("=== FINISHED DROP PENALTY CONSTRAINTS ===");
         } else {
             logger.warn("DEBUG: Skipping drop penalty constraints");
         }

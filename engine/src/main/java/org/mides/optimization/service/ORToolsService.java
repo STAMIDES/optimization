@@ -12,7 +12,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 
 @Service
 public class ORToolsService implements IORToolsService {
@@ -402,7 +401,7 @@ public class ORToolsService implements IORToolsService {
 
         var searchParams = main.defaultRoutingSearchParameters()
             .toBuilder()
-            .setFirstSolutionStrategy(FirstSolutionStrategy.Value.AUTOMATIC)
+            .setFirstSolutionStrategy(FirstSolutionStrategy.Value.PARALLEL_CHEAPEST_INSERTION)
             .setLocalSearchMetaheuristic(LocalSearchMetaheuristic.Value.GUIDED_LOCAL_SEARCH)
             .setTimeLimit(com.google.protobuf.Duration.newBuilder().setSeconds(10).build())
             .build();

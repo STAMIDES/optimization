@@ -1,6 +1,6 @@
 FROM ghcr.io/project-osrm/osrm-backend:latest
 
-COPY prepare_osrm_data.sh ./prepare_osrm_data.sh
+COPY prepare_osrm_data.sh car.lua /opt/
 
 RUN apk update && apk add --no-cache curl bash
 

@@ -67,7 +67,7 @@ public class ORToolsService implements IORToolsService {
                 indices[i] = manager.nodeToIndex(taskIndex + i);
             }
 
-            routing.addDisjunction(indices, DROP_PENALTY, numberOfStops);
+            routing.addDisjunction(indices, DROP_PENALTY * numberOfStops, numberOfStops);
             taskIndex += numberOfStops;
         }
 
